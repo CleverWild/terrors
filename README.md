@@ -6,23 +6,23 @@ and then if the set of errors is not within those local
 concerns, propagating the remainder to a caller. The
 caller should not receive the local errors of the callee.
 
-# Principles
+## Principles
 
-* Error types should be precise.
-  * `terrors::OneOf` solves this by making precise sets of possible errors:
-    * low friction to specify
-    * low friction to narrow by specific error handlers
-    * low friction to broaden to pass up the stack
-* Error handling should follow the single responsibility principle
-    * if every error in a system is spread everywhere else, there
-      is no clear responsibility for where it needs to be handled.
-* No macros.
-    * Users should not have to learn some new DSL for error handling that every macro entails.
+- Error types should be precise.
+  - `terrors::OneOf` solves this by making precise sets of possible errors:
+    - low friction to specify
+    - low friction to narrow by specific error handlers
+    - low friction to broaden to pass up the stack
+- Error handling should follow the single responsibility principle
+  - if every error in a system is spread everywhere else, there
+    is no clear responsibility for where it needs to be handled.
+- No macros.
+  - Users should not have to learn some new DSL for error handling that every macro entails.
 
-# Examples
+## Examples
 
 ```rust
-use terrors::OneOf;
+use terrors::{BroadenErr, OneOf};
 
 let one_of_3: OneOf<(String, u32, Vec<u8>)> = OneOf::new(5);
 
@@ -35,7 +35,7 @@ assert_eq!(5, narrowed_res.unwrap());
 OneOf can also be broadened to a superset, checked at compile-time.
 
 ```rust
-use terrors::OneOf;
+use terrors::{BroadenErr, OneOf};
 
 struct Timeout;
 struct AllocationFailure;
@@ -108,25 +108,25 @@ use terrors::{OneOf, E2};
 let o_1: OneOf<(u32, String)> = OneOf::new(5_u32);
 
 match o_1.as_enum() {
-    E2::A(u) => {
+    E2::T1(u) => {
         println!("handling reference {u}: u32")
     }
-    E2::B(s) => {
+    E2::T2(s) => {
         println!("handling reference {s}: String")
     }
 }
 
 match o_1.to_enum() {
-    E2::A(u) => {
+    E2::T1(u) => {
         println!("handling owned {u}: u32")
     }
-    E2::B(s) => {
+    E2::T2(s) => {
         println!("handling owned {s}: String")
     }
 }
 ```
 
-### Motivation
+## Motivation
 
 The paper [Simple Testing Can Prevent Most Critical Failures: An Analysis of Production Failures in Distributed Data-intensive Systems](https://www.eecg.toronto.edu/~yuan/papers/failure_analysis_osdi14.pdf)
 is goldmine of fascinating statistics that illuminate the
@@ -155,14 +155,15 @@ one or two places that hold the precise set of possible
 errors, most people resort to one of two strategies for
 minimizing the effort that goes into propagating their
 error types:
-* A large top-level enum that holds variants for errors
+
+- A large top-level enum that holds variants for errors
   originating across the codebase, tending to grow
   larger and larger over time, undermining the ability
   to use exhaustive pattern matching to confidently
   ensure that local concerns are not bubbling up the stack.
-* A boxed trait that is easy to convert errors into, but
- then hides information about what may actually be inside.
- You don't know where it's been or where it's going.
+- A boxed trait that is easy to convert errors into, but
+  then hides information about what may actually be inside.
+  You don't know where it's been or where it's going.
 
 As the number of different source error types that these
 error containers hold increases, the amount of information

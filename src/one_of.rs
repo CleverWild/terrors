@@ -1,15 +1,13 @@
-use core::any::Any;
-use core::fmt;
-use core::marker::PhantomData;
-use core::ops::Deref;
+//! Similar to anonymous unions / enums in languages that support type narrowing.
+
+use core::{any::Any, fmt, ops::Deref};
 use std::error::Error;
 
-use crate::type_set::{
-    CloneFold, Contains, DebugFold, DisplayFold, ErrorFold, IsFold, Narrow, SupersetOf, TupleForm,
-    TypeSet,
+use crate::{
+    fold::{CloneFold, DebugFold, DisplayFold, ErrorFold},
+    type_set::{Contains, DrainInto, EnumRuntime, Narrow, TupleForm, TypeSet},
+    Cons, End,
 };
-
-use crate::{Cons, End};
 
 /* ------------------------- OneOf ----------------------- */
 
@@ -30,8 +28,7 @@ use crate::{Cons, End};
 /// involving a precise subset of errors that the caller
 /// can clearly reason about.
 pub struct OneOf<E: TypeSet> {
-    pub(crate) value: Box<dyn Any>,
-    _pd: PhantomData<E>,
+    pub(crate) value: E::Enum,
 }
 
 fn _send_sync_error_assert() {
@@ -41,76 +38,86 @@ fn _send_sync_error_assert() {
     fn is_sync<T: Sync>(_: &T) {}
     fn is_error<T: Error>(_: &T) {}
 
-    let o: OneOf<(io::Error,)> = OneOf::new(io::Error::new(io::ErrorKind::Other, "yooo"));
+    let o: OneOf<(io::Error,)> = OneOf::new(io::Error::other("yooo"));
     is_send(&o);
     is_sync(&o);
     is_error(&o);
 }
 
-unsafe impl<T> Send for OneOf<T> where T: TypeSet + Send {}
-unsafe impl<T> Sync for OneOf<T> where T: TypeSet + Sync {}
-
-impl<T> Deref for OneOf<(T,)>
+unsafe impl<E> Send for OneOf<E>
 where
-    T: 'static,
+    E: TypeSet,
+    E::Enum: Send,
 {
-    type Target = T;
+}
+unsafe impl<E> Sync for OneOf<E>
+where
+    E: TypeSet,
+    E::Enum: Sync,
+{
+}
 
-    fn deref(&self) -> &T {
-        self.value.downcast_ref::<T>().unwrap()
+impl<T1> Deref for OneOf<(T1,)>
+where
+    T1: 'static,
+{
+    type Target = T1;
+
+    fn deref(&self) -> &T1 {
+        match &self.value {
+            crate::E1::T1(value) => value,
+        }
     }
 }
 
-impl<T> From<T> for OneOf<(T,)>
+impl<T1> From<T1> for OneOf<(T1,)>
 where
-    T: 'static,
+    T1: 'static,
 {
-    fn from(t: T) -> OneOf<(T,)> {
+    fn from(t: T1) -> OneOf<(T1,)> {
         OneOf::new(t)
     }
 }
 
 impl<E> Clone for OneOf<E>
 where
-    E: TypeSet,
+    E: TypeSet + EnumRuntime,
     E::Variants: Clone + CloneFold,
 {
     fn clone(&self) -> Self {
-        let value = E::Variants::clone_fold(&self.value);
-
+        let boxed = E::Variants::clone_fold(E::enum_ref_as_any(&self.value));
         OneOf {
-            value,
-            _pd: PhantomData,
+            value: E::enum_from_any(boxed),
         }
     }
 }
 impl<E> fmt::Debug for OneOf<E>
 where
-    E: TypeSet,
+    E: TypeSet + EnumRuntime,
     E::Variants: fmt::Debug + DebugFold,
 {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        E::Variants::debug_fold(&self.value, formatter)
+        E::Variants::debug_fold(E::enum_ref_as_any(&self.value), formatter)
     }
 }
 
 impl<E> fmt::Display for OneOf<E>
 where
-    E: TypeSet,
+    E: TypeSet + EnumRuntime,
     E::Variants: fmt::Display + DisplayFold,
 {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        E::Variants::display_fold(&self.value, formatter)
+        E::Variants::display_fold(E::enum_ref_as_any(&self.value), formatter)
     }
 }
 
 impl<E> Error for OneOf<E>
 where
-    E: TypeSet,
+    E: TypeSet + EnumRuntime,
     E::Variants: Error + DebugFold + DisplayFold + ErrorFold,
 {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
-        E::Variants::source_fold(&self.value)
+        E::Variants::source_fold(E::enum_ref_as_any(&self.value))
     }
 }
 
@@ -118,15 +125,26 @@ impl<E> OneOf<E>
 where
     E: TypeSet,
 {
-    /// Create a new `OneOf`.
+    /// Wraps a value in a `OneOf`, inferring the variant from the value's type.
+    ///
+    /// The compiler verifies at compile time (via the [`Contains`] bound) that `T` is
+    /// one of the declared variants. A type mismatch is a compile error.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use terrors::OneOf;
+    ///
+    /// let e: OneOf<(String, u32)> = OneOf::new(42u32);
+    /// ```
     pub fn new<T, Index>(t: T) -> OneOf<E>
     where
         T: Any,
+        E: EnumRuntime,
         E::Variants: Contains<T, Index>,
     {
         OneOf {
-            value: Box::new(t),
-            _pd: PhantomData,
+            value: E::enum_from_any(Box::new(t)),
         }
     }
 
@@ -141,75 +159,50 @@ where
     >
     where
         Target: 'static,
+        E: EnumRuntime,
         E::Variants: Narrow<Target, Index>,
+        <<E::Variants as Narrow<Target, Index>>::Remainder as TupleForm>::Tuple: EnumRuntime,
     {
-        if self.value.is::<Target>() {
-            Ok(*self.value.downcast::<Target>().unwrap())
+        let boxed = E::enum_into_any(self.value);
+
+        if boxed.is::<Target>() {
+            Ok(*boxed.downcast::<Target>().unwrap())
         } else {
+            type RemainderTuple<E, Target, Index> =
+                <<E as TypeSet>::Variants as Narrow<Target, Index>>::Remainder;
+
             Err(OneOf {
-                value: self.value,
-                _pd: PhantomData,
+                value: <<RemainderTuple<E, Target, Index> as TupleForm>::Tuple as EnumRuntime>::enum_from_any(boxed),
             })
         }
     }
 
-    /// Turns the `OneOf` into a `OneOf` with a set of variants
-    /// which is a superset of the current one. This may also be
-    /// the same set of variants, but in a different order.
-    pub fn broaden<Other, Index>(self) -> OneOf<Other>
-    where
-        Other: TypeSet,
-        Other::Variants: SupersetOf<E::Variants, Index>,
-    {
-        OneOf {
-            value: self.value,
-            _pd: PhantomData,
-        }
-    }
-
-    /// Attempt to split a subset of variants out of the `OneOf`,
-    /// returning the remainder of possible variants if the value
-    /// does not have one of the `TargetList` types.
-    pub fn subset<TargetList, Index>(
-        self,
-    ) -> Result<
-        OneOf<TargetList>,
-        OneOf<<<E::Variants as SupersetOf<TargetList::Variants, Index>>::Remainder as TupleForm>::Tuple>,
-    >
-    where
-        TargetList: TypeSet,
-        E::Variants: IsFold + SupersetOf<TargetList::Variants, Index>,
-    {
-        if E::Variants::is_fold(&self.value) {
-            Ok(OneOf {
-                value: self.value,
-                _pd: PhantomData,
-            })
-        } else {
-            Err(OneOf {
-                value: self.value,
-                _pd: PhantomData,
-            })
-        }
-    }
-
-    /// For a `OneOf` with a single variant, return
-    /// the contained value.
+    /// For a `OneOf` with a single variant, return the contained value.
     pub fn take<Target>(self) -> Target
     where
         Target: 'static,
-        E: TypeSet<Variants = Cons<Target, End>>,
+        E: TypeSet<Variants = Cons<Target, End>> + EnumRuntime,
     {
-        *self.value.downcast::<Target>().unwrap()
+        *E::enum_into_any(self.value).downcast::<Target>().unwrap()
+    }
+
+    /// Consumes the [`Self`] and converts whichever variant it holds into `O`,
+    /// requiring every possible variant to implement `Into<O>`.
+    ///
+    /// We keep this as an inherent method instead of implementing `Into<O> for OneOf<E>`
+    /// because that impl conflicts with `core`'s blanket `Into` implementation and
+    /// is rejected by coherence rules.
+    pub fn into<O>(self) -> O
+    where
+        E: DrainInto<O>,
+    {
+        <E as DrainInto<O>>::drain(self)
     }
 
     /// Convert the `OneOf` to an owned enum for
     /// use in pattern matching etc...
-    pub fn to_enum(self) -> E::Enum
-    where
-        E::Enum: From<Self>,
-    {
-        E::Enum::from(self)
+    pub fn to_enum(self) -> E::Enum {
+        self.value
     }
 
     /// Borrow the enum as an enum for use in
@@ -218,6 +211,6 @@ where
     where
         E::EnumRef<'a>: From<&'a Self>,
     {
-        E::EnumRef::from(&self)
+        E::EnumRef::from(self)
     }
 }

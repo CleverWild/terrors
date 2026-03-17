@@ -1,4 +1,4 @@
-use terrors::OneOf;
+use terrors::{BroadenErr, OneOf, SubsetErr};
 
 #[derive(Debug)]
 struct NotEnoughMemory;
@@ -35,6 +35,7 @@ fn retry() {
     let _ = dbg!(inner());
 }
 
+#[expect(clippy::let_unit_value)]
 fn does_stuff() -> Result<(), OneOf<(NotEnoughMemory, Timeout)>> {
     // TODO Try impl after superset type work
     let _allocation = match allocates() {
@@ -106,7 +107,7 @@ fn debug() {
     println!("{}", o_1);
 
     type E = io::Error;
-    let e = io::Error::new(io::ErrorKind::Other, "wuaaaaahhhzzaaaaaaaa");
+    let e = io::Error::other("wuaaaaahhhzzaaaaaaaa");
 
     let o_2: OneOf<(E,)> = OneOf::new(e);
 
@@ -124,19 +125,19 @@ fn multi_match() {
     let o_1: OneOf<(u32, String)> = OneOf::new(5_u32);
 
     match o_1.as_enum() {
-        E2::A(u) => {
+        E2::T1(u) => {
             println!("handling {u}: u32")
         }
-        E2::B(s) => {
+        E2::T2(s) => {
             println!("handling {s}: String")
         }
     }
 
     match o_1.to_enum() {
-        E2::A(u) => {
+        E2::T1(u) => {
             println!("handling {u}: u32")
         }
-        E2::B(s) => {
+        E2::T2(s) => {
             println!("handling {s}: String")
         }
     }
@@ -151,16 +152,209 @@ fn multi_narrow() {
 
     let o_1: OneOf<(u8, u16, u32, u64, u128)> = OneOf::new(5_u32);
 
+    #[expect(clippy::type_complexity)]
     let _narrow_res: Result<OneOf<(u8, u128)>, OneOf<(u16, u32, u64)>> = o_1.subset();
 
     let o_2: OneOf<(u8, u16, Backoff, Timeout, u32, u64, u128)> = OneOf::new(Timeout {});
 
     match o_2.subset::<(Timeout, Backoff), _>().unwrap().to_enum() {
-        E2::A(Timeout {}) => {
+        E2::T1(Timeout {}) => {
             println!(":)");
         }
-        E2::B(Backoff {}) => {
+        E2::T2(Backoff {}) => {
             unreachable!()
         }
     }
+}
+
+#[test]
+fn into() {
+    let o: OneOf<(u32,)> = OneOf::new(7_u32);
+    let drained: u32 = o.into();
+
+    assert_eq!(drained, 7);
+
+    let from_str: OneOf<(String, &'static str)> = OneOf::new("hello");
+    let from_owned: OneOf<(String, &'static str)> = OneOf::new(String::from("world"));
+
+    let drained_1: String = from_str.into();
+    let drained_2: String = from_owned.into();
+
+    assert_eq!(drained_1, "hello");
+    assert_eq!(drained_2, "world");
+
+    let from_u8: OneOf<(u8, u16, u32)> = OneOf::new(3_u8);
+    let from_u32: OneOf<(u8, u16, u32)> = OneOf::new(42_u32);
+
+    let drained_1: u128 = from_u8.into();
+    let drained_2: u128 = from_u32.into();
+
+    assert_eq!(drained_1, 3_u128);
+    assert_eq!(drained_2, 42_u128);
+}
+
+#[test]
+fn complex_into() {
+    struct NotEnoughMemory;
+    struct Timeout;
+    struct CommonHandleableError;
+    struct NeverUsed;
+
+    enum BroadError {
+        NotEnoughMemory(NotEnoughMemory),
+        Timeout(Timeout),
+        CommonHandlableError(CommonHandleableError),
+        _NeverUsed(NeverUsed),
+    }
+    impl From<NotEnoughMemory> for BroadError {
+        fn from(value: NotEnoughMemory) -> Self {
+            BroadError::NotEnoughMemory(value)
+        }
+    }
+    impl From<Timeout> for BroadError {
+        fn from(value: Timeout) -> Self {
+            BroadError::Timeout(value)
+        }
+    }
+    impl From<CommonHandleableError> for BroadError {
+        fn from(value: CommonHandleableError) -> Self {
+            BroadError::CommonHandlableError(value)
+        }
+    }
+
+    // even From impl for NeverUsed isn't necessary since it's never used
+
+    fn does_stuff() -> Result<(), OneOf<(Timeout,)>> {
+        Err(OneOf::new(Timeout))
+    }
+    fn do_handleable_stuff() -> Result<(), OneOf<(NotEnoughMemory, CommonHandleableError)>> {
+        Err(OneOf::new(CommonHandleableError))
+    }
+    fn do_another_stuff() -> Result<(), OneOf<(NotEnoughMemory,)>> {
+        Err(OneOf::new(NotEnoughMemory))
+    }
+    fn mr_delegation() -> Result<(), OneOf<(NotEnoughMemory, Timeout)>> {
+        do_another_stuff().broaden()?;
+
+        let result = do_handleable_stuff();
+
+        // compile error since CommonHandleableError wasn't in return type
+        // result.map_err(OneOf::broaden)?;
+
+        match result.unwrap_err().narrow() {
+            Ok(CommonHandleableError) => {
+                // handling common handleable error
+            }
+            Err(oneof) => {
+                // CommonHandleableError wasn't here, so it's totally fine
+                return Err(oneof.broaden());
+            }
+        }
+
+        does_stuff().broaden()
+    }
+
+    let o = mr_delegation().unwrap_err();
+    let _the_broad_one: BroadError = o.into();
+}
+
+#[test]
+fn ext_broaden_option() {
+    let e: Option<OneOf<(u8,)>> = Some(OneOf::new(7_u8));
+    let b: Option<OneOf<(u8, u16)>> = e.broaden();
+
+    assert!(b.is_some());
+    let extracted: u8 = b.unwrap().narrow().unwrap();
+    assert_eq!(extracted, 7);
+}
+
+#[test]
+fn ext_broaden_result_err() {
+    let e: Result<(), OneOf<(u8,)>> = Err(OneOf::new(9_u8));
+    let b: Result<(), OneOf<(u8, u16)>> = e.broaden();
+
+    assert!(b.is_err());
+    let extracted: u8 = b.unwrap_err().narrow().unwrap();
+    assert_eq!(extracted, 9);
+}
+
+#[test]
+fn ext_subset_result_split() {
+    type SplitResult = Result<Result<u32, OneOf<(u16,)>>, OneOf<(u8,)>>;
+
+    let r1: Result<u32, OneOf<(u8, u16)>> = Ok(10);
+    let split_1: SplitResult = r1.subset();
+    assert_eq!(split_1.unwrap().unwrap(), 10);
+
+    let r2: Result<u32, OneOf<(u8, u16)>> = Err(OneOf::new(7_u8));
+    let split_2: SplitResult = r2.subset();
+    assert_eq!(split_2.unwrap_err().narrow::<u8, _>().unwrap(), 7_u8);
+
+    let r3: Result<u32, OneOf<(u8, u16)>> = Err(OneOf::new(9_u16));
+    let split_3: SplitResult = r3.subset();
+    let rest = split_3.unwrap().unwrap_err();
+    assert_eq!(rest.narrow::<u16, _>().unwrap(), 9_u16);
+}
+
+#[test]
+fn complex_subset() {
+    #[derive(Debug)]
+    struct NotEnoughMemory;
+    #[derive(Debug)]
+    struct Timeout;
+    #[derive(Debug)]
+    struct CommonHandleableError;
+
+    enum Mode {
+        Common,
+        Memory,
+        Timeout,
+    }
+
+    fn always_times_out() -> Result<(), OneOf<(Timeout,)>> {
+        Err(OneOf::new(Timeout))
+    }
+
+    fn do_handleable_stuff(
+        mode: Mode,
+    ) -> Result<(), OneOf<(NotEnoughMemory, CommonHandleableError, Timeout)>> {
+        match mode {
+            Mode::Common => Err(OneOf::new(CommonHandleableError)),
+            Mode::Memory => Err(OneOf::new(NotEnoughMemory)),
+            Mode::Timeout => Err(OneOf::new(Timeout)),
+        }
+    }
+
+    fn mr_delegation(mode: Mode) -> Result<(), OneOf<(Timeout, NotEnoughMemory)>> {
+        let rest_or_ok = {
+            let this = do_handleable_stuff(mode);
+            match this {
+                Ok(value) => Ok(Ok(value)),
+                Err(errs) => match errs.subset() {
+                    Ok(o) => Err(o),
+                    Err(rest) => Ok(Err(rest)),
+                },
+            }
+        }?;
+
+        match rest_or_ok {
+            Ok(()) => {}
+            Err(rest) => match rest.to_enum() {
+                terrors::E1::T1(common) => {
+                    println!("handling common error: {common:?}");
+                }
+            },
+        }
+
+        always_times_out().broaden()
+    }
+
+    let timeout_after_local_handling = mr_delegation(Mode::Common).unwrap_err();
+    timeout_after_local_handling.narrow::<Timeout, _>().unwrap();
+
+    let propagated_memory = mr_delegation(Mode::Memory).unwrap_err();
+    propagated_memory.narrow::<NotEnoughMemory, _>().unwrap();
+
+    let propagated_timeout = mr_delegation(Mode::Timeout).unwrap_err();
+    propagated_timeout.narrow::<Timeout, _>().unwrap();
 }

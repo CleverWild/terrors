@@ -1,209 +1,91 @@
 //! Type-level set inclusion and difference, inspired by frunk's approach: <https://archive.is/YwDMX>
 use core::any::Any;
-use core::fmt;
-use std::error::Error;
 
-use crate::{Cons, End, Recurse};
+use crate::{enums::*, Cons, End, OneOf, Recurse};
 
-/* ------------------------- std::error::Error support ----------------------- */
-
-pub trait ErrorFold {
-    fn source_fold(any: &Box<dyn Any>) -> Option<&(dyn Error + 'static)>;
-
-    #[cfg(feature = "error_provide")]
-    fn provide_fold<'a>(any: &'a Box<dyn Any>, request: &mut std::error::Request<'a>);
-}
-
-impl ErrorFold for End {
-    fn source_fold(_: &Box<dyn Any>) -> Option<&(dyn Error + 'static)> {
-        unreachable!("source_fold called on End");
-    }
-
-    #[cfg(feature = "error_provide")]
-    fn provide_fold<'a>(_: &Box<dyn Any>, _: &mut std::error::Request<'a>) {
-        unreachable!("provide_fold called on End");
-    }
-}
-
-impl<Head, Tail> Error for Cons<Head, Tail>
-where
-    Head: Error,
-    Tail: Error,
-{
-}
-
-impl<Head, Tail> ErrorFold for Cons<Head, Tail>
-where
-    Cons<Head, Tail>: Error,
-    Head: 'static + Error,
-    Tail: ErrorFold,
-{
-    fn source_fold(any: &Box<dyn Any>) -> Option<&(dyn Error + 'static)> {
-        if let Some(head_ref) = any.downcast_ref::<Head>() {
-            head_ref.source()
+macro_rules! enum_from_any_branch {
+    ($any:ident, $enum:ident, $ty:ident) => {
+        $enum::$ty(*$any.downcast().unwrap())
+    };
+    ($any:ident, $enum:ident, $ty:ident, $($rest_ty:ident),+) => {
+        if $any.is::<$ty>() {
+            $enum::$ty(*$any.downcast().unwrap())
         } else {
-            Tail::source_fold(any)
+            enum_from_any_branch!($any, $enum, $($rest_ty),+)
         }
-    }
+    };
+}
 
-    #[cfg(feature = "error_provide")]
-    fn provide_fold<'a>(any: &'a Box<dyn Any>, request: &mut std::error::Request<'a>) {
-        if let Some(head_ref) = any.downcast_ref::<Head>() {
-            head_ref.provide(request)
-        } else {
-            Tail::provide_fold(any, request)
+macro_rules! tuple_type {
+    ($only:ident) => {
+        ($only,)
+    };
+    ($head:ident, $($tail:ident),+ $(,)?) => {
+        ($head, $($tail),+)
+    };
+}
+
+macro_rules! cons_type {
+    ($head:ident $(, $tail:ident)* $(,)?) => {
+        Cons<$head, cons_type!($($tail),*)>
+    };
+    () => {
+        End
+    };
+}
+
+macro_rules! impl_tuple_type_set {
+    ($enum:ident; $($ty:ident),+ $(,)?) => {
+        impl<$($ty),+> TypeSet for tuple_type!($($ty),+) {
+            type Variants = cons_type!($($ty),+);
+            type Enum = $enum<$($ty),+>;
+            type EnumRef<'a> = $enum<$( &'a $ty ),+> where Self: 'a;
         }
-    }
-}
 
-/* ------------------------- Display support ----------------------- */
+        impl<$($ty: 'static),+> EnumRuntime for tuple_type!($($ty),+) {
+            fn enum_into_any(e: Self::Enum) -> Box<dyn Any> {
+                match e {
+                    $(
+                        $enum::$ty(value) => Box::new(value),
+                    )+
+                }
+            }
 
-impl<Head, Tail> fmt::Display for Cons<Head, Tail>
-where
-    Head: fmt::Display,
-    Tail: fmt::Display,
-{
-    fn fmt(&self, _: &mut fmt::Formatter<'_>) -> fmt::Result {
-        unreachable!("Display called for Cons which is not constructable")
-    }
-}
+            fn enum_ref_as_any(e: &Self::Enum) -> &dyn Any {
+                match e {
+                    $(
+                        $enum::$ty(value) => value as &dyn Any,
+                    )+
+                }
+            }
 
-impl fmt::Display for End {
-    fn fmt(&self, _: &mut fmt::Formatter<'_>) -> fmt::Result {
-        unreachable!("Display::fmt called for an End, which is not constructible.")
-    }
-}
-
-pub trait DisplayFold {
-    fn display_fold(any: &Box<dyn Any>, formatter: &mut fmt::Formatter<'_>) -> fmt::Result;
-}
-
-impl DisplayFold for End {
-    fn display_fold(_: &Box<dyn Any>, _: &mut fmt::Formatter<'_>) -> fmt::Result {
-        unreachable!("display_fold called on End");
-    }
-}
-
-impl<Head, Tail> DisplayFold for Cons<Head, Tail>
-where
-    Cons<Head, Tail>: fmt::Display,
-    Head: 'static + fmt::Display,
-    Tail: DisplayFold,
-{
-    fn display_fold(any: &Box<dyn Any>, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some(head_ref) = any.downcast_ref::<Head>() {
-            head_ref.fmt(formatter)
-        } else {
-            Tail::display_fold(any, formatter)
+            fn enum_from_any(any: Box<dyn Any>) -> Self::Enum {
+                enum_from_any_branch!(any, $enum, $($ty),+)
+            }
         }
-    }
-}
 
-/* ------------------------- Debug support ----------------------- */
-
-pub trait DebugFold {
-    fn debug_fold(any: &Box<dyn Any>, formatter: &mut fmt::Formatter<'_>) -> fmt::Result;
-}
-
-impl DebugFold for End {
-    fn debug_fold(_: &Box<dyn Any>, _: &mut fmt::Formatter<'_>) -> fmt::Result {
-        unreachable!("debug_fold called on End");
-    }
-}
-
-impl<Head, Tail> DebugFold for Cons<Head, Tail>
-where
-    Cons<Head, Tail>: fmt::Debug,
-    Head: 'static + fmt::Debug,
-    Tail: DebugFold,
-{
-    fn debug_fold(any: &Box<dyn Any>, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some(head_ref) = any.downcast_ref::<Head>() {
-            head_ref.fmt(formatter)
-        } else {
-            Tail::debug_fold(any, formatter)
+        impl<$($ty),+> TupleForm for cons_type!($($ty),+) {
+            type Tuple = tuple_type!($($ty),+);
         }
-    }
-}
-
-/* ------------------------- Clone support ----------------------- */
-
-pub trait CloneFold {
-    fn clone_fold(any: &Box<dyn Any>) -> Box<dyn Any>;
-}
-
-impl Clone for End {
-    fn clone(&self) -> End {
-        unreachable!("clone called for End");
-    }
-}
-
-impl<Head, Tail> Clone for Cons<Head, Tail>
-where
-    Head: 'static + Clone,
-    Tail: CloneFold,
-{
-    fn clone(&self) -> Self {
-        unreachable!("clone called for Cons which is not constructable");
-    }
-}
-
-impl CloneFold for End {
-    fn clone_fold(_: &Box<dyn Any>) -> Box<dyn Any> {
-        unreachable!("clone_fold called on End");
-    }
-}
-
-impl<Head, Tail> CloneFold for Cons<Head, Tail>
-where
-    Head: 'static + Clone,
-    Tail: CloneFold,
-{
-    fn clone_fold(any: &Box<dyn Any>) -> Box<dyn Any> {
-        if let Some(head_ref) = any.downcast_ref::<Head>() {
-            Box::new(head_ref.clone())
-        } else {
-            Tail::clone_fold(any)
-        }
-    }
-}
-
-fn _clone_test() {
-    fn is_clone<T: Clone>() {}
-
-    type T0 = <(String, u32) as TypeSet>::Variants;
-
-    is_clone::<T0>();
-}
-
-/* ------------------------- Any::is support ----------------------- */
-
-pub trait IsFold {
-    fn is_fold(any: &Box<dyn Any>) -> bool;
-}
-
-impl IsFold for End {
-    fn is_fold(_: &Box<dyn Any>) -> bool {
-        false
-    }
-}
-
-impl<Head, Tail> IsFold for Cons<Head, Tail>
-where
-    Head: 'static,
-    Tail: IsFold,
-{
-    fn is_fold(any: &Box<dyn Any>) -> bool {
-        if any.is::<Head>() {
-            true
-        } else {
-            Tail::is_fold(any)
-        }
-    }
+    };
 }
 
 /* ------------------------- TypeSet implemented for tuples ----------------------- */
 
+/// Maps a tuple of distinct types to the internal representation used by [`OneOf`].
+///
+/// This is the core bridge between user-facing tuple syntax (e.g. `(IoError, ParseError)`)
+/// and the machinery underneath:
+///
+/// - [`Variants`](TypeSet::Variants) — a `Cons<T1, Cons<T2, … End>>` linked list enabling
+///   compile-time set arithmetic ([`Contains`], [`Narrow`], [`SupersetOf`]).
+/// - [`Enum`](TypeSet::Enum) — the anonymous generated enum (e.g. `E2<T1, T2>`) that stores
+///   the value at runtime inside a [`OneOf`].
+/// - [`EnumRef`](TypeSet::EnumRef) — the borrowed version of `Enum`, returned by
+///   [`OneOf::as_enum`].
+///
+/// Implementations are generated automatically for tuples of 0–16 types.
+/// You never implement this trait manually.
 pub trait TypeSet {
     type Variants: TupleForm;
     type Enum;
@@ -212,69 +94,68 @@ pub trait TypeSet {
         Self: 'a;
 }
 
+/// Runtime bridge between a [`TypeSet::Enum`] and a type-erased `Box<dyn Any>`.
+///
+/// [`OneOf`] stores its value as a `TypeSet::Enum`, but set-arithmetic operations
+/// (narrowing, broadening, subsetting) need to pass the inner value around without
+/// knowing its concrete type. `EnumRuntime` provides three conversions:
+///
+/// - [`enum_into_any`](EnumRuntime::enum_into_any) — consumes the enum, boxing its inner value.
+/// - [`enum_ref_as_any`](EnumRuntime::enum_ref_as_any) — borrows the inner value as `&dyn Any`.
+/// - [`enum_from_any`](EnumRuntime::enum_from_any) — reconstructs the enum from a `Box<dyn Any>`;
+///   panics if the boxed type does not match any variant.
+///
+/// Automatically implemented for all tuples that implement [`TypeSet`].
+/// Do not implement manually.
+pub trait EnumRuntime: TypeSet {
+    fn enum_into_any(e: Self::Enum) -> Box<dyn Any>;
+    fn enum_ref_as_any(e: &Self::Enum) -> &dyn Any;
+    fn enum_from_any(any: Box<dyn Any>) -> Self::Enum;
+}
+
 impl TypeSet for () {
     type Variants = End;
-    type Enum = E0;
-    type EnumRef<'a> = E0 where Self: 'a;
+    type Enum = crate::E0;
+    type EnumRef<'a>
+        = crate::E0
+    where
+        Self: 'a;
 }
 
-impl<A> TypeSet for (A,) {
-    type Variants = Cons<A, End>;
-    type Enum = E1<A>;
-    type EnumRef<'a> = E1<&'a A> where Self: 'a;
+impl EnumRuntime for () {
+    fn enum_into_any(e: Self::Enum) -> Box<dyn Any> {
+        match e {}
+    }
+
+    fn enum_ref_as_any(e: &Self::Enum) -> &dyn Any {
+        match *e {}
+    }
+
+    fn enum_from_any(_: Box<dyn Any>) -> Self::Enum {
+        unreachable!("cannot build E0 from Box<dyn Any>");
+    }
 }
 
-impl<A, B> TypeSet for (A, B) {
-    type Variants = Cons<A, Cons<B, End>>;
-    type Enum = E2<A, B>;
-    type EnumRef<'a> = E2<&'a A, &'a B> where Self: 'a;
+macro_rules! impl_supported_tuple_type_sets {
+    (each: $($enum:ident => $($ty:ident),+;)+) => {
+        $(
+            impl_tuple_type_set!($enum; $($ty),+);
+        )+
+    };
 }
 
-impl<A, B, C> TypeSet for (A, B, C) {
-    type Variants = Cons<A, Cons<B, Cons<C, End>>>;
-    type Enum = E3<A, B, C>;
-    type EnumRef<'a> = E3<&'a A, &'a B, &'a C> where Self: 'a;
-}
-
-impl<A, B, C, D> TypeSet for (A, B, C, D) {
-    type Variants = Cons<A, Cons<B, Cons<C, Cons<D, End>>>>;
-    type Enum = E4<A, B, C, D>;
-    type EnumRef<'a> = E4<&'a A, &'a B, &'a C, &'a D> where Self: 'a;
-}
-
-impl<A, B, C, D, E> TypeSet for (A, B, C, D, E) {
-    type Variants = Cons<A, Cons<B, Cons<C, Cons<D, Cons<E, End>>>>>;
-    type Enum = E5<A, B, C, D, E>;
-    type EnumRef<'a> = E5<&'a A, &'a B, &'a C, &'a D, &'a E> where Self: 'a;
-}
-
-impl<A, B, C, D, E, F> TypeSet for (A, B, C, D, E, F) {
-    type Variants = Cons<A, Cons<B, Cons<C, Cons<D, Cons<E, Cons<F, End>>>>>>;
-    type Enum = E6<A, B, C, D, E, F>;
-    type EnumRef<'a> = E6<&'a A, &'a B, &'a C, &'a D, &'a E, &'a F> where Self: 'a;
-}
-
-impl<A, B, C, D, E, F, G> TypeSet for (A, B, C, D, E, F, G) {
-    type Variants = Cons<A, Cons<B, Cons<C, Cons<D, Cons<E, Cons<F, Cons<G, End>>>>>>>;
-    type Enum = E7<A, B, C, D, E, F, G>;
-    type EnumRef<'a> = E7<&'a A, &'a B, &'a C, &'a D, &'a E, &'a F, &'a G> where Self: 'a;
-}
-
-impl<A, B, C, D, E, F, G, H> TypeSet for (A, B, C, D, E, F, G, H) {
-    type Variants = Cons<A, Cons<B, Cons<C, Cons<D, Cons<E, Cons<F, Cons<G, Cons<H, End>>>>>>>>;
-    type Enum = E8<A, B, C, D, E, F, G, H>;
-    type EnumRef<'a> = E8<&'a A, &'a B, &'a C, &'a D, &'a E, &'a F, &'a G, &'a H> where Self: 'a;
-}
-
-impl<A, B, C, D, E, F, G, H, I> TypeSet for (A, B, C, D, E, F, G, H, I) {
-    type Variants =
-        Cons<A, Cons<B, Cons<C, Cons<D, Cons<E, Cons<F, Cons<G, Cons<H, Cons<I, End>>>>>>>>>;
-    type Enum = E9<A, B, C, D, E, F, G, H, I>;
-    type EnumRef<'a> = E9<&'a A, &'a B, &'a C, &'a D, &'a E, &'a F, &'a G, &'a H, &'a I> where Self: 'a;
-}
+crate::with_supported_type_sets!(impl_supported_tuple_type_sets);
 
 /* ------------------------- TupleForm implemented for TypeSet ----------------------- */
 
+/// The inverse of [`TypeSet`]: converts a type-level `Cons`/`End` list back to its tuple form.
+///
+/// Used internally after operations like [`Narrow`] and [`SupersetOf`] that produce a
+/// modified `Cons` list — the result must be converted back to a tuple in order to
+/// parametrize a new [`OneOf`].
+///
+/// Implementations are generated automatically alongside [`TypeSet`].
+/// You never implement this trait manually.
 pub trait TupleForm {
     type Tuple: TypeSet;
 }
@@ -283,126 +164,17 @@ impl TupleForm for End {
     type Tuple = ();
 }
 
-impl<A> TupleForm for Cons<A, End> {
-    type Tuple = (A,);
-}
-
-impl<A, B> TupleForm for Cons<A, Cons<B, End>> {
-    type Tuple = (A, B);
-}
-
-impl<A, B, C> TupleForm for Cons<A, Cons<B, Cons<C, End>>> {
-    type Tuple = (A, B, C);
-}
-
-impl<A, B, C, D> TupleForm for Cons<A, Cons<B, Cons<C, Cons<D, End>>>> {
-    type Tuple = (A, B, C, D);
-}
-
-impl<A, B, C, D, E> TupleForm for Cons<A, Cons<B, Cons<C, Cons<D, Cons<E, End>>>>> {
-    type Tuple = (A, B, C, D, E);
-}
-
-impl<A, B, C, D, E, F> TupleForm for Cons<A, Cons<B, Cons<C, Cons<D, Cons<E, Cons<F, End>>>>>> {
-    type Tuple = (A, B, C, D, E, F);
-}
-
-impl<A, B, C, D, E, F, G> TupleForm
-    for Cons<A, Cons<B, Cons<C, Cons<D, Cons<E, Cons<F, Cons<G, End>>>>>>>
-{
-    type Tuple = (A, B, C, D, E, F, G);
-}
-
-impl<A, B, C, D, E, F, G, H> TupleForm
-    for Cons<A, Cons<B, Cons<C, Cons<D, Cons<E, Cons<F, Cons<G, Cons<H, End>>>>>>>>
-{
-    type Tuple = (A, B, C, D, E, F, G, H);
-}
-
-impl<A, B, C, D, E, F, G, H, I> TupleForm
-    for Cons<A, Cons<B, Cons<C, Cons<D, Cons<E, Cons<F, Cons<G, Cons<H, Cons<I, End>>>>>>>>>
-{
-    type Tuple = (A, B, C, D, E, F, G, H, I);
-}
-
-/* ------------------------- Lifted ----------------------- */
-
-pub enum E0 {}
-pub enum E1<A> {
-    A(A),
-}
-impl<A> From<A> for E1<A> {
-    fn from(a: A) -> E1<A> {
-        E1::A(a)
-    }
-}
-pub enum E2<A, B> {
-    A(A),
-    B(B),
-}
-pub enum E3<A, B, C> {
-    A(A),
-    B(B),
-    C(C),
-}
-pub enum E4<A, B, C, D> {
-    A(A),
-    B(B),
-    C(C),
-    D(D),
-}
-pub enum E5<A, B, C, D, E> {
-    A(A),
-    B(B),
-    C(C),
-    D(D),
-    E(E),
-}
-pub enum E6<A, B, C, D, E, F> {
-    A(A),
-    B(B),
-    C(C),
-    D(D),
-    E(E),
-    F(F),
-}
-pub enum E7<A, B, C, D, E, F, G> {
-    A(A),
-    B(B),
-    C(C),
-    D(D),
-    E(E),
-    F(F),
-    G(G),
-}
-pub enum E8<A, B, C, D, E, F, G, H> {
-    A(A),
-    B(B),
-    C(C),
-    D(D),
-    E(E),
-    F(F),
-    G(G),
-    H(H),
-}
-pub enum E9<A, B, C, D, E, F, G, H, I> {
-    A(A),
-    B(B),
-    C(C),
-    D(D),
-    E(E),
-    F(F),
-    G(G),
-    H(H),
-    I(I),
-}
-
 /* ------------------------- Contains ----------------------- */
 
-/// A trait that assists with compile-time type set inclusion testing.
-/// The `Index` parameter is either `End` or `Cons<...>` depending on
-/// whether the trait implementation is a base case or the recursive
-/// case.
+/// Compile-time proof that type `T` is a member of the `Cons` list `Self`.
+///
+/// The `Index` phantom parameter encodes the *position* of `T` in the list as a
+/// `End` (found at the head) or `Cons<Index, ()>` (found further in the tail) path,
+/// allowing the compiler to select the correct impl without ambiguity.
+///
+/// You never call or implement this trait directly. It appears as a bound inside
+/// [`OneOf::new`] to guarantee at compile time that the value being wrapped is one
+/// of the declared variants.
 pub trait Contains<T, Index> {}
 
 /// Base case implementation for when the Cons Head is T.
@@ -416,8 +188,15 @@ impl<T, Index, Head, Tail> Contains<T, Cons<Index, ()>> for Cons<Head, Tail> whe
 
 /* ------------------------- Narrow ----------------------- */
 
-/// A trait for pulling a specific type out of a Variants at compile-time
-/// and having access to the other types as the Remainder.
+/// Compile-time extraction of a single type `Target` from a `Cons` list.
+///
+/// Produces `Remainder` — the original list with `Target` removed — so that a failed
+/// [`OneOf::narrow`] call can return a `OneOf` over the remaining variants.
+///
+/// The `Index` phantom parameter encodes the position of `Target` within the list.
+/// Two implementations cover all cases:
+/// - base case: `Target` is at the head (`Index = End`).
+/// - recursive case: `Target` is somewhere in the tail (`Index = Recurse<…>`).
 pub trait Narrow<Target, Index>: TupleForm {
     type Remainder: TupleForm;
 }
@@ -455,9 +234,79 @@ fn _narrow_test() {
     can_narrow::<T0, String, Cons<u32, End>, _>();
 }
 
+/* ------------------------- DrainInto ----------------------- */
+
+/// Exhaustively converts a [`OneOf`] into a single output type `O` by consuming it.
+///
+/// Every variant in the set must implement `Into<O>`. The compiler proves this
+/// statically, so no runtime pattern-matching or fallibility is involved.
+///
+/// # Example
+///
+/// ```rust
+/// use terrors::OneOf;
+///
+/// let e: OneOf<(String, &str)> = OneOf::new("hello");
+/// let s: String = e.into();
+/// assert_eq!(s, "hello");
+/// ```
+pub trait DrainInto<O>: TypeSet + Sized {
+    /// Consumes `e` and converts whichever variant it holds into `O`.
+    fn drain(e: OneOf<Self>) -> O;
+}
+
+macro_rules! impl_drain_into {
+    ($head:ident) => {
+        impl<$head, O> DrainInto<O> for ($head,)
+        where
+            $head: Into<O> + 'static,
+        {
+            fn drain(e: OneOf<($head,)>) -> O {
+                e.take().into()
+            }
+        }
+    };
+    ($head:ident, $($tail:ident),+) => {
+        impl_drain_into!($($tail),+);
+        impl<$head, $($tail),+, O> DrainInto<O> for ($head, $($tail),+)
+        where
+            $head: Into<O> + 'static,
+            $($tail: 'static,)+
+            ($($tail,)+): DrainInto<O>,
+        {
+            fn drain(e: OneOf<($head, $($tail),+)>) -> O {
+                match e.narrow::<$head, _>() {
+                    Ok(h) => h.into(),
+                    Err(rest) => <($($tail,)+)>::drain(rest),
+                }
+            }
+        }
+    };
+}
+
+// Peel entries until the last one, which contains the full type list.
+// impl_drain_into! is recursive and generates impls for all sub-lengths itself.
+macro_rules! impl_supported_drain_into {
+    (each: $enum:ident => $($ty:ident),+;) => {
+        impl_drain_into!($($ty),+);
+    };
+    (each: $enum:ident => $($ty:ident),+; $($rest:tt)+) => {
+        impl_supported_drain_into!(each: $($rest)+);
+    };
+}
+
+crate::with_supported_type_sets!(impl_supported_drain_into);
+
 /* ------------------------- SupersetOf ----------------------- */
 
-/// When all types in a Variants are present in a second Variants
+/// Compile-time proof that every type in `Other` is also present in `Self`.
+///
+/// Used by [`OneOf::broaden`] (which requires `Other ⊇ Self`) and
+/// [`OneOf::subset`] (which tests whether the held value belongs to a subset).
+///
+/// `Remainder` is the set of types that are in `Self` but *not* in `Other`. It
+/// is used to construct the fallback [`OneOf`] returned by [`OneOf::subset`]
+/// when the value does not belong to the target subset.
 pub trait SupersetOf<Other, Index> {
     type Remainder: TupleForm;
 }

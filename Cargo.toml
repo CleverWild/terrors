@@ -1,8 +1,8 @@
 [package]
 name = "terrors"
-version = "0.3.3"
+version = "0.4.0"
 edition = "2021"
-authors = ["Tyler Neely <tylerneely@gmail.com>"]
+authors = ["Tyler Neely <tylerneely@gmail.com>, CleverWild"]
 documentation = "https://docs.rs/terrors/"
 description = "ergonomic and precise error handling built atop type-level set arithmetic"
 license = "MIT OR Apache-2.0"
