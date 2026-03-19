@@ -1,6 +1,8 @@
 use crate::{fold::IsFold, EnumRuntime, OneOf, SupersetOf, TupleForm, TypeSet};
 
+/// Splits [`Self`] by checking whether the held error belongs to a requested subset `O`.
 pub trait SubsetErr<E: TypeSet> {
+    /// Output type after subsetting to `O`.
     type Output<O: TypeSet, Index>: Sized
     where
         E::Variants: SupersetOf<O::Variants, Index>,
@@ -9,12 +11,8 @@ pub trait SubsetErr<E: TypeSet> {
         <<E::Variants as SupersetOf<O::Variants, Index>>::Remainder as TupleForm>::Tuple:
             EnumRuntime;
 
-    /// Designed to be used in a method chain after `?` on a `Result<T, OneOf<E>>`,
-    /// this method splits a `Result<T, OneOf<E>>` into three outcomes:
-    ///
-    /// - `Ok(Ok(T))` when the original result was successful.
-    /// - `Err(OneOf<O>)` when the error belongs to subset `O`, so it can be propagated with `?`.
-    /// - `Ok(Err(OneOf<Rest>))` when the error is not `O`, preserving the remainder.
+    /// Designed to be used in a method chain before `?` to narrow down 
+    /// the error type to a subset of variants that the caller can handle.
     fn subset<O, Index>(self) -> Self::Output<O, Index>
     where
         E: EnumRuntime,
@@ -75,6 +73,11 @@ impl<T, E: TypeSet> SubsetErr<E> for Result<T, OneOf<E>> {
         <<E::Variants as SupersetOf<O::Variants, Index>>::Remainder as TupleForm>::Tuple:
             EnumRuntime;
 
+    /// This method splits a `Result<T, OneOf<E>>` into three outcomes:
+    ///
+    /// - `Ok(Ok(T))` when the original result was successful.
+    /// - `Err(OneOf<O>)` when the error belongs to subset `O`, so it can be propagated with `?`.
+    /// - `Ok(Err(OneOf<Rest>))` when the error is not `O`, preserving the remainder.
     fn subset<O, Index>(self) -> Self::Output<O, Index>
     where
         E: EnumRuntime,

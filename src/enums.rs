@@ -16,8 +16,14 @@
 
 macro_rules! define_lifted_enum {
     ($enum:ident; $($ty:ident),+ $(,)?) => {
+        #[doc = concat!(
+            "Lifted runtime enum for a `OneOf` over `(",
+            $(stringify!($ty), ", ",)+
+            ")`.",
+        )]
         pub enum $enum<$($ty),+> {
             $(
+                #[doc = concat!("Variant holding a `", stringify!($ty), "` value.")]
                 $ty($ty),
             )+
         }

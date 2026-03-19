@@ -1,6 +1,11 @@
 use crate::{EnumRuntime, OneOf, SupersetOf, TypeSet};
 
+/// Broadens a [`OneOf`] (or containers that hold it) into a superset of variants.
+///
+/// This is mainly ergonomic sugar so you can write `.map_err(OneOf::broaden)` and
+/// similar method chains while preserving compile-time subset/superset checks.
 pub trait BroadenErr<E: TypeSet> {
+    /// Resulting container type after broadening to `O`.
     type Output<O: TypeSet>: Sized;
 
     /// Turns the `OneOf` into a `OneOf` with a set of variants

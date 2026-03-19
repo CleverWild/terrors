@@ -3,6 +3,7 @@
     feature(error_generic_member_access)
 )]
 #![doc = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/README.md"))]
+#![warn(missing_docs)]
 #![allow(clippy::type_complexity)]
 
 macro_rules! with_supported_type_sets {

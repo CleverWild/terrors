@@ -87,8 +87,13 @@ macro_rules! impl_tuple_type_set {
 /// Implementations are generated automatically for tuples of 0–16 types.
 /// You never implement this trait manually.
 pub trait TypeSet {
+    /// Type-level linked-list form (`Cons<..., End>`) of this tuple set.
     type Variants: TupleForm;
+
+    /// Lifted runtime enum used as storage for [`OneOf<Self>`](crate::OneOf).
     type Enum;
+
+    /// Borrowed lifted runtime enum, typically produced by [`OneOf::as_enum`](crate::OneOf::as_enum).
     type EnumRef<'a>
     where
         Self: 'a;
@@ -108,8 +113,17 @@ pub trait TypeSet {
 /// Automatically implemented for all tuples that implement [`TypeSet`].
 /// Do not implement manually.
 pub trait EnumRuntime: TypeSet {
+    /// Consumes a lifted enum and erases the held variant value to `Box<dyn Any>`.
     fn enum_into_any(e: Self::Enum) -> Box<dyn Any>;
+
+    /// Borrows the inner variant value as `&dyn Any` without moving it.
     fn enum_ref_as_any(e: &Self::Enum) -> &dyn Any;
+
+    /// Rebuilds a lifted enum from `Box<dyn Any>`.
+    ///
+    /// # Panics
+    ///
+    /// Implementations may panic if `any` does not contain one of the set's variant types.
     fn enum_from_any(any: Box<dyn Any>) -> Self::Enum;
 }
 
@@ -157,6 +171,7 @@ crate::with_supported_type_sets!(impl_supported_tuple_type_sets);
 /// Implementations are generated automatically alongside [`TypeSet`].
 /// You never implement this trait manually.
 pub trait TupleForm {
+    /// Tuple representation corresponding to this `Cons`/`End` chain.
     type Tuple: TypeSet;
 }
 
@@ -198,6 +213,7 @@ impl<T, Index, Head, Tail> Contains<T, Cons<Index, ()>> for Cons<Head, Tail> whe
 /// - base case: `Target` is at the head (`Index = End`).
 /// - recursive case: `Target` is somewhere in the tail (`Index = Recurse<…>`).
 pub trait Narrow<Target, Index>: TupleForm {
+    /// `Self` with `Target` removed.
     type Remainder: TupleForm;
 }
 
@@ -308,6 +324,7 @@ crate::with_supported_type_sets!(impl_supported_drain_into);
 /// is used to construct the fallback [`OneOf`] returned by [`OneOf::subset`]
 /// when the value does not belong to the target subset.
 pub trait SupersetOf<Other, Index> {
+    /// Types present in `Self` but not in `Other`.
     type Remainder: TupleForm;
 }
 
