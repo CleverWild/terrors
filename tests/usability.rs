@@ -1,4 +1,4 @@
-use terrors::{BroadErr, Broaden, OneOf, SubsetErr};
+use terrors::{Broaden, OneOf, SubsetErr};
 
 #[derive(Debug)]
 struct NotEnoughMemory;
@@ -261,7 +261,7 @@ fn complex_into() {
 #[test]
 fn broad_err_basic() {
     let e: Result<(), u8> = Err(9_u8);
-    let b: Result<(), OneOf<(u8, u16)>> = e.broad_err();
+    let b: Result<(), OneOf<(u8, u16)>> = e.map_err(OneOf::new);
 
     let extracted: u8 = b.unwrap_err().narrow().unwrap();
     assert_eq!(extracted, 9);
@@ -270,7 +270,7 @@ fn broad_err_basic() {
 #[test]
 fn broad_err_ok_passthrough() {
     let e: Result<u32, u8> = Ok(42);
-    let b: Result<u32, OneOf<(u8, u16)>> = e.broad_err();
+    let b: Result<u32, OneOf<(u8, u16)>> = e.map_err(OneOf::new);
 
     assert_eq!(b.unwrap(), 42);
 }
@@ -278,7 +278,7 @@ fn broad_err_ok_passthrough() {
 #[test]
 fn broad_err_non_first_variant() {
     let e: Result<(), u16> = Err(7_u16);
-    let b: Result<(), OneOf<(u8, u16, u32)>> = e.broad_err();
+    let b: Result<(), OneOf<(u8, u16, u32)>> = e.map_err(OneOf::new);
 
     let extracted: u16 = b.unwrap_err().narrow().unwrap();
     assert_eq!(extracted, 7);
@@ -294,8 +294,8 @@ fn broad_err_question_mark() {
     }
 
     fn combined() -> Result<(), OneOf<(u8, u16)>> {
-        returns_plain().broad_err()?;
-        returns_plain_u16().broad_err()?;
+        returns_plain().map_err(OneOf::new)?;
+        returns_plain_u16().map_err(OneOf::new)?;
         Ok(())
     }
 
