@@ -22,7 +22,7 @@ caller should not receive the local errors of the callee.
 ## Examples
 
 ```rust
-use terrors::{BroadenErr, OneOf};
+use terrors::{Broaden, OneOf};
 
 let one_of_3: OneOf<(String, u32, Vec<u8>)> = OneOf::new(5);
 
@@ -35,7 +35,7 @@ assert_eq!(5, narrowed_res.unwrap());
 OneOf can also be broadened to a superset, checked at compile-time.
 
 ```rust
-use terrors::{BroadenErr, OneOf};
+use terrors::{Broaden, OneOf};
 
 struct Timeout;
 struct AllocationFailure;

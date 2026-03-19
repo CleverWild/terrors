@@ -199,6 +199,23 @@ where
         <E as DrainInto<O>>::drain(self)
     }
 
+    /// Broadens this `OneOf` into a superset of variants.
+    ///
+    /// We keep this as an inherent method instead of relying solely on [`BroadenErr`]
+    /// so that `OneOf::broaden` as a function pointer resolves unambiguously even when
+    /// a blanket `BroadenErr` impl exists for all plain error types.
+    pub fn broaden<Other, Index>(self) -> OneOf<Other>
+    where
+        E: EnumRuntime,
+        Other: TypeSet + EnumRuntime,
+        Other::Variants: crate::SupersetOf<E::Variants, Index>,
+    {
+        let boxed = E::enum_into_any(self.value);
+        OneOf {
+            value: Other::enum_from_any(boxed),
+        }
+    }
+
     /// Convert the `OneOf` to an owned enum for
     /// use in pattern matching etc...
     pub fn to_enum(self) -> E::Enum {

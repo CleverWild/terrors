@@ -1,6 +1,6 @@
 [package]
 name = "terrors"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 authors = ["Tyler Neely <tylerneely@gmail.com>, CleverWild"]
 documentation = "https://docs.rs/terrors/"

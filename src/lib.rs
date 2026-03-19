@@ -60,7 +60,7 @@ mod one_of;
 mod subset;
 mod type_set;
 
-pub use broaden::BroadenErr;
+pub use broaden::{BroadErr, Broaden};
 pub use enums::*;
 pub use one_of::OneOf;
 pub use subset::SubsetErr;
