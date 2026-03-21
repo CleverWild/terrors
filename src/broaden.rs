@@ -1,4 +1,4 @@
-use crate::{type_set::Contains, EnumRuntime, OneOf, SupersetOf, TypeSet};
+use crate::{EnumRuntime, OneOf, SupersetOf, TypeSet};
 
 /// Broadens a [`OneOf`] (or containers that hold it) into a superset of variants.
 ///
