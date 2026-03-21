@@ -11,8 +11,6 @@ use crate::{Cons, End};
 
 /* ------------------------- Error ----------------------- */
 
-impl Error for End {}
-
 impl<Head, Tail> Error for Cons<Head, Tail>
 where
     Head: Error,
@@ -69,12 +67,6 @@ where
 }
 
 /* ------------------------- Display ----------------------- */
-
-impl fmt::Display for End {
-    fn fmt(&self, _: &mut fmt::Formatter<'_>) -> fmt::Result {
-        unreachable!("Display::fmt called for an End, which is not constructible.")
-    }
-}
 
 impl<Head, Tail> fmt::Display for Cons<Head, Tail>
 where
@@ -148,12 +140,6 @@ where
 }
 
 /* ------------------------- Clone ----------------------- */
-
-impl Clone for End {
-    fn clone(&self) -> End {
-        unreachable!("clone called for End");
-    }
-}
 
 impl<Head, Tail> Clone for Cons<Head, Tail>
 where

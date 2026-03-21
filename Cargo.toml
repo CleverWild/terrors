@@ -12,5 +12,11 @@ keywords = ["error", "error-handling", "type-level", "anonymous", "sum"]
 readme = "README.md"
 
 [features]
-error_provide = []
-error_provide_feature = []
+default = []
+nightly = []
+error_provide = ["nightly"]
+
+# ---------------- lints ----------------
+[lints.rust]
+
+[lints.clippy]

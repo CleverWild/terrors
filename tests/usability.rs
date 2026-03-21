@@ -1,3 +1,5 @@
+#![allow(clippy::type_complexity)]
+
 use terrors::{Broaden, OneOf, SubsetErr};
 
 #[derive(Debug)]
@@ -152,7 +154,6 @@ fn multi_narrow() {
 
     let o_1: OneOf<(u8, u16, u32, u64, u128)> = OneOf::new(5_u32);
 
-    #[expect(clippy::type_complexity)]
     let _narrow_res: Result<OneOf<(u8, u128)>, OneOf<(u16, u32, u64)>> = o_1.subset();
 
     let o_2: OneOf<(u8, u16, Backoff, Timeout, u32, u64, u128)> = OneOf::new(Timeout {});
@@ -334,12 +335,12 @@ fn ext_subset_result_split() {
 
     let r2: Result<u32, OneOf<(u8, u16)>> = Err(OneOf::new(7_u8));
     let split_2: SplitResult = r2.subset();
-    assert_eq!(split_2.unwrap_err().narrow::<u8, _>().unwrap(), 7_u8);
+    assert_eq!(split_2.unwrap_err().narrow().unwrap(), 7_u8);
 
     let r3: Result<u32, OneOf<(u8, u16)>> = Err(OneOf::new(9_u16));
     let split_3: SplitResult = r3.subset();
     let rest = split_3.unwrap().unwrap_err();
-    assert_eq!(rest.narrow::<u16, _>().unwrap(), 9_u16);
+    assert_eq!(rest.narrow().unwrap(), 9_u16);
 }
 
 #[test]
@@ -403,4 +404,10 @@ fn complex_subset() {
 
     let propagated_timeout = mr_delegation(Mode::Timeout).unwrap_err();
     propagated_timeout.narrow::<Timeout, _>().unwrap();
+}
+
+#[cfg(feature = "nightly")]
+#[test]
+fn unique_types() {
+    // let _x: OneOf<(u8, u16, u8)> = OneOf::new(5_u8);
 }
