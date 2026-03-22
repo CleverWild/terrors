@@ -29,6 +29,7 @@ macro_rules! define_lifted_enum {
         }
 
         impl<$($ty: core::fmt::Debug),+> core::fmt::Debug for $enum<$($ty),+> {
+            #[inline]
             fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
                 match self {
                     $($enum::$ty(v) => core::fmt::Debug::fmt(v, f),)+
@@ -37,6 +38,7 @@ macro_rules! define_lifted_enum {
         }
 
         impl<$($ty: core::fmt::Display),+> core::fmt::Display for $enum<$($ty),+> {
+            #[inline]
             fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
                 match self {
                     $($enum::$ty(v) => core::fmt::Display::fmt(v, f),)+
@@ -45,6 +47,7 @@ macro_rules! define_lifted_enum {
         }
 
         impl<$($ty: core::clone::Clone),+> core::clone::Clone for $enum<$($ty),+> {
+            #[inline]
             fn clone(&self) -> Self {
                 match self {
                     $($enum::$ty(v) => $enum::$ty(core::clone::Clone::clone(v)),)+
@@ -53,6 +56,7 @@ macro_rules! define_lifted_enum {
         }
 
         impl<$($ty: core::error::Error + 'static),+> core::error::Error for $enum<$($ty),+> {
+            #[inline]
             fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
                 match self {
                     $($enum::$ty(v) => v.source(),)+
@@ -60,6 +64,7 @@ macro_rules! define_lifted_enum {
             }
 
             #[cfg(feature = "error_provide")]
+            #[inline]
             fn provide<'a>(&'a self, request: &mut core::error::Request<'a>) {
                 match self {
                     $($enum::$ty(v) => core::error::Error::provide(v, request),)+
@@ -76,24 +81,28 @@ macro_rules! define_lifted_enum {
 pub enum E0 {}
 
 impl core::fmt::Debug for E0 {
+    #[inline]
     fn fmt(&self, _: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         unreachable!()
     }
 }
 
 impl core::fmt::Display for E0 {
+    #[inline]
     fn fmt(&self, _: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         unreachable!()
     }
 }
 
 impl core::clone::Clone for E0 {
+    #[inline]
     fn clone(&self) -> Self {
         unreachable!()
     }
 }
 
 impl core::error::Error for E0 {
+    #[inline]
     fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
         unreachable!()
     }
