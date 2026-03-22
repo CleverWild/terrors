@@ -109,18 +109,7 @@ impl<E> OneOf<E>
 where
     E: TypeSet,
 {
-    /// Wraps a value in a `OneOf`, inferring the variant from the value's type.
-    ///
-    /// The compiler verifies at compile time (via the [`Contains`] bound) that `T` is
-    /// one of the declared variants. A type mismatch is a compile error.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use terrors::OneOf;
-    ///
-    /// let e: OneOf<( &'static str, u32)> = OneOf::new(42u32);
-    /// ```
+    /// Create a new `OneOf`.
     #[inline]
     pub fn new<T, Index>(t: T) -> Self
     where
