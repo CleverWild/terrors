@@ -1,6 +1,16 @@
-#![allow(clippy::type_complexity)]
+//! Tests for usability of the public API.
+//! These are not meant to be comprehensive, but should cover common patterns and ensure that the ergonomics are good.
+#![allow(
+    clippy::dbg_macro,
+    clippy::print_stdout,
+    clippy::use_debug,
+    clippy::unwrap_used,
+    clippy::unwrap_in_result,
+    clippy::tests_outside_test_module,
+    clippy::let_underscore_must_use
+)]
 
-use terrors::{Broaden, OneOf, SubsetErr};
+use terrors::{Broaden as _, OneOf, SubsetErr as _};
 
 #[derive(Debug)]
 struct NotEnoughMemory;
@@ -20,7 +30,7 @@ fn retry() {
             };
 
             match err.narrow::<Timeout, _>() {
-                Ok(_timeout) => continue,
+                Ok(_timeout) => {}
                 Err(allocation_oneof) => {
                     println!("didn't get Timeout, now trying to get NotEnoughMemory");
                     let allocation_oneof: OneOf<(NotEnoughMemory,)> = allocation_oneof;
@@ -62,32 +72,32 @@ fn allocates() -> Result<(), OneOf<(NotEnoughMemory,)>> {
     Ok(())
 }
 
-fn chats() -> Result<(), Timeout> {
+const fn chats() -> Result<(), Timeout> {
     Err(Timeout)
 }
 
 #[test]
 fn smoke() {
-    let o_1: OneOf<(u32, String)> = OneOf::new(5_u32);
+    let o_1: OneOf<(u32, &'static str)> = OneOf::new(5_u32);
     let _narrowed_1: u32 = o_1.narrow::<u32, _>().unwrap();
 
-    let o_2: OneOf<(String, u32)> = OneOf::new(5_u32);
+    let o_2: OneOf<(&'static str, u32)> = OneOf::new(5_u32);
     let _narrowed_2: u32 = o_2.narrow::<u32, _>().unwrap();
 
-    let o_3: OneOf<(String, u32)> = OneOf::new("5".to_string());
-    let _narrowed_3: OneOf<(String,)> = o_3.narrow::<u32, _>().unwrap_err();
+    let o_3: OneOf<(&'static str, u32)> = OneOf::new("5");
+    let _narrowed_3: OneOf<(&'static str,)> = o_3.narrow::<u32, _>().unwrap_err();
 
-    let o_4: OneOf<(String, u32)> = OneOf::new("5".to_string());
+    let o_4: OneOf<(&'static str, u32)> = OneOf::new("5");
 
-    let _: String = o_4.narrow().unwrap();
+    let _: &'static str = o_4.narrow().unwrap();
 
-    let o_5: OneOf<(String, u32)> = OneOf::new("5".to_string());
-    o_5.narrow::<String, _>().unwrap();
+    let o_5: OneOf<(&'static str, u32)> = OneOf::new("5");
+    o_5.narrow::<&'static str, _>().unwrap();
 
-    let o_6: OneOf<(String, u32)> = OneOf::new("5".to_string());
-    let o_7: OneOf<(u32, String)> = o_6.broaden();
-    let o_8: OneOf<(String, u32)> = o_7.subset().unwrap();
-    let _: OneOf<(u32, String)> = o_8.subset().unwrap();
+    let o_6: OneOf<(&'static str, u32)> = OneOf::new("5");
+    let o_7: OneOf<(u32, &'static str)> = o_6.broaden();
+    let o_8: OneOf<(&'static str, u32)> = o_7.subset().unwrap();
+    let _: OneOf<(u32, &'static str)> = o_8.subset().unwrap();
 
     let o_9: OneOf<(u8, u16, u32)> = OneOf::new(3_u32);
     let _: Result<OneOf<(u16,)>, OneOf<(u8, u32)>> = o_9.subset();
@@ -97,16 +107,16 @@ fn smoke() {
 
 #[test]
 fn debug() {
-    use std::error::Error;
+    use core::error::Error as _;
     use std::io;
 
-    let o_1: OneOf<(u32, String)> = OneOf::new(5_u32);
+    let o_1: OneOf<(u32, &'static str)> = OneOf::new(5_u32);
 
     // Debug is implemented if all types in the type set implement Debug
     dbg!(&o_1);
 
     // Display is implemented if all types in the type set implement Display
-    println!("{}", o_1);
+    println!("{o_1}");
 
     type E = io::Error;
     let e = io::Error::other("wuaaaaahhhzzaaaaaaaa");
@@ -116,7 +126,7 @@ fn debug() {
     // std::error::Error is implemented if all types in the type set implement it
     dbg!(o_2.source());
 
-    let o_3: OneOf<(u32, String)> = OneOf::new("hey".to_string());
+    let o_3: OneOf<(u32, &'static str)> = OneOf::new("hey");
     dbg!(o_3);
 }
 
@@ -124,23 +134,23 @@ fn debug() {
 fn multi_match() {
     use terrors::E2;
 
-    let o_1: OneOf<(u32, String)> = OneOf::new(5_u32);
+    let o_1: OneOf<(u32, &'static str)> = OneOf::new(5_u32);
 
     match o_1.as_enum() {
         E2::T1(u) => {
-            println!("handling {u}: u32")
+            println!("handling {u}: u32");
         }
         E2::T2(s) => {
-            println!("handling {s}: String")
+            println!("handling {s}:  &'static str");
         }
     }
 
     match o_1.to_enum() {
         E2::T1(u) => {
-            println!("handling {u}: u32")
+            println!("handling {u}: u32");
         }
         E2::T2(s) => {
-            println!("handling {s}: String")
+            println!("handling {s}:  &'static str");
         }
     }
 }
@@ -149,8 +159,8 @@ fn multi_match() {
 fn multi_narrow() {
     use terrors::E2;
 
-    struct Timeout {}
-    struct Backoff {}
+    struct Timeout;
+    struct Backoff;
 
     let o_1: OneOf<(u8, u16, u32, u64, u128)> = OneOf::new(5_u32);
 
@@ -175,11 +185,11 @@ fn into() {
 
     assert_eq!(drained, 7);
 
-    let from_str: OneOf<(String, &'static str)> = OneOf::new("hello");
-    let from_owned: OneOf<(String, &'static str)> = OneOf::new(String::from("world"));
+    let from_str: OneOf<(&'static str,)> = OneOf::new("hello");
+    let from_owned: OneOf<(&'static str,)> = OneOf::new("world");
 
-    let drained_1: String = from_str.into();
-    let drained_2: String = from_owned.into();
+    let drained_1: &'static str = from_str.into();
+    let drained_2: &'static str = from_owned.into();
 
     assert_eq!(drained_1, "hello");
     assert_eq!(drained_2, "world");
@@ -209,17 +219,17 @@ fn complex_into() {
     }
     impl From<NotEnoughMemory> for BroadError {
         fn from(value: NotEnoughMemory) -> Self {
-            BroadError::NotEnoughMemory(value)
+            Self::NotEnoughMemory(value)
         }
     }
     impl From<Timeout> for BroadError {
         fn from(value: Timeout) -> Self {
-            BroadError::Timeout(value)
+            Self::Timeout(value)
         }
     }
     impl From<CommonHandleableError> for BroadError {
         fn from(value: CommonHandleableError) -> Self {
-            BroadError::CommonHandlableError(value)
+            Self::CommonHandlableError(value)
         }
     }
 
@@ -352,6 +362,7 @@ fn complex_subset() {
     #[derive(Debug)]
     struct CommonHandleableError;
 
+    #[derive(Clone, Copy)]
     enum Mode {
         Common,
         Memory,

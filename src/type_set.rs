@@ -1,20 +1,6 @@
-//! Type-level set inclusion and difference, inspired by frunk's approach: <https://archive.is/YwDMX>
-use core::any::Any;
+//! Type-level set inclusion and difference, inspired by frunk's approach: <https://archive.is/YwDMX>.
 
-use crate::{enums::*, Cons, End, OneOf, Recurse};
-
-macro_rules! enum_from_any_branch {
-    ($any:ident, $enum:ident, $ty:ident) => {
-        $enum::$ty(*$any.downcast().unwrap())
-    };
-    ($any:ident, $enum:ident, $ty:ident, $($rest_ty:ident),+) => {
-        if $any.is::<$ty>() {
-            $enum::$ty(*$any.downcast().unwrap())
-        } else {
-            enum_from_any_branch!($any, $enum, $($rest_ty),+)
-        }
-    };
-}
+use crate::{Cons, End, OneOf, Recurse, enums::*};
 
 macro_rules! tuple_type {
     ($only:ident) => {
@@ -43,24 +29,58 @@ macro_rules! impl_tuple_type_set {
         }
 
         impl<$($ty: 'static),+> EnumRuntime for tuple_type!($($ty),+) {
-            fn enum_into_any(e: Self::Enum) -> Box<dyn Any> {
+            #[inline]
+            fn type_id(e: &Self::Enum) -> core::any::TypeId {
                 match e {
                     $(
-                        $enum::$ty(value) => Box::new(value),
+                        $enum::$ty(_) => core::any::TypeId::of::<$ty>(),
+                    )+
+                }
+            }
+            
+            #[inline]
+            unsafe fn try_from_raw(id: core::any::TypeId, ptr: *mut ()) -> Option<Self::Enum> {
+                $(
+                    if id == core::any::TypeId::of::<$ty>() {
+                        // SAFETY: Caller guarantees `ptr` points to a valid owned `$ty`
+                        // when `id` matches this branch.
+                        return Some($enum::$ty(unsafe { core::ptr::read(ptr.cast::<$ty>()) }));
+                    }
+                )+
+                None
+            }
+
+            #[inline]
+            fn try_cast<O: EnumRuntime>(e: Self::Enum) -> Result<O::Enum, Self::Enum> {
+                match e {
+                    $(
+                        $enum::$ty(v) => match O::from_owned(v) {
+                            Ok(o) => Ok(o),
+                            Err(v) => Err($enum::$ty(v)),
+                        }
                     )+
                 }
             }
 
-            fn enum_ref_as_any(e: &Self::Enum) -> &dyn Any {
-                match e {
-                    $(
-                        $enum::$ty(value) => value as &dyn Any,
-                    )+
+            #[inline]
+            fn narrow_type<Target: 'static>(e: Self::Enum) -> Result<Target, Self::Enum> {
+                if <Self as EnumRuntime>::type_id(&e) == core::any::TypeId::of::<Target>() {
+                    match e {
+                        $(
+                            $enum::$ty(v) => {
+                                let mut v = core::mem::ManuallyDrop::new(v);
+                                let ptr = (&raw mut *v).cast::<Target>();
+                                // SAFETY: We only enter this branch when `Target`'s `TypeId`
+                                // matches the currently stored variant type (`$ty`), so `ptr`
+                                // points to a valid initialized value of `Target`.
+                                let val = unsafe { core::ptr::read(ptr) };
+                                Ok(val)
+                            }
+                        )+
+                    }
+                } else {
+                    Err(e)
                 }
-            }
-
-            fn enum_from_any(any: Box<dyn Any>) -> Self::Enum {
-                enum_from_any_branch!(any, $enum, $($ty),+)
             }
         }
 
@@ -99,32 +119,55 @@ pub trait TypeSet {
         Self: 'a;
 }
 
-/// Runtime bridge between a [`TypeSet::Enum`] and a type-erased `Box<dyn Any>`.
+/// Runtime bridge for moving values between generated [`TypeSet::Enum`] forms
+/// without dynamic allocation.
 ///
-/// [`OneOf`] stores its value as a `TypeSet::Enum`, but set-arithmetic operations
-/// (narrowing, broadening, subsetting) need to pass the inner value around without
-/// knowing its concrete type. `EnumRuntime` provides three conversions:
-///
-/// - [`enum_into_any`](EnumRuntime::enum_into_any) — consumes the enum, boxing its inner value.
-/// - [`enum_ref_as_any`](EnumRuntime::enum_ref_as_any) — borrows the inner value as `&dyn Any`.
-/// - [`enum_from_any`](EnumRuntime::enum_from_any) — reconstructs the enum from a `Box<dyn Any>`;
-///   panics if the boxed type does not match any variant.
+/// [`OneOf`] stores its value as a `TypeSet::Enum`, while set operations
+/// (narrowing, broadening, subsetting) may need to transfer ownership between
+/// different enum layouts. `EnumRuntime` provides the low-level primitive
+/// [`try_from_raw`](EnumRuntime::try_from_raw) and safe helpers built on top.
 ///
 /// Automatically implemented for all tuples that implement [`TypeSet`].
 /// Do not implement manually.
-pub trait EnumRuntime: TypeSet {
-    /// Consumes a lifted enum and erases the held variant value to `Box<dyn Any>`.
-    fn enum_into_any(e: Self::Enum) -> Box<dyn Any>;
+pub trait EnumRuntime: TypeSet + Sized {
+    /// The `TypeId` of the currently held variant.
+    fn type_id(e: &Self::Enum) -> core::any::TypeId;
 
-    /// Borrows the inner variant value as `&dyn Any` without moving it.
-    fn enum_ref_as_any(e: &Self::Enum) -> &dyn Any;
+    /// Attempts to move an owned value `T` into `Self::Enum`.
+    ///
+    /// Returns `Ok(Self::Enum)` when `T` is one of this set variants,
+    /// otherwise returns the original value in `Err(T)`.
+    #[inline]
+    fn from_owned<T: 'static>(value: T) -> Result<Self::Enum, T> {
+        let mut value = core::mem::ManuallyDrop::new(value);
+        let id = core::any::TypeId::of::<T>();
+        let ptr = (&raw mut *value).cast::<()>();
 
-    /// Rebuilds a lifted enum from `Box<dyn Any>`.
+        // SAFETY: `ptr` points to a valid owned `T` for the duration of this call.
+        // If `try_from_raw` succeeds, ownership moves into the returned enum.
+        // If it fails, we reconstruct and return the original value.
+        let maybe = unsafe { Self::try_from_raw(id, ptr) };
+        let Some(e) = maybe else {
+            return Err(core::mem::ManuallyDrop::into_inner(value));
+        };
+        Ok(e)
+    }
+
+    /// Attempts to construct `Self::Enum` by reading from `ptr` if `type_id` matches one of the variants.
     ///
-    /// # Panics
-    ///
-    /// Implementations may panic if `any` does not contain one of the set's variant types.
-    fn enum_from_any(any: Box<dyn Any>) -> Self::Enum;
+    /// # Safety
+    /// Caller must ensure that if `type_id` matches one of the variants, `ptr` points to a valid
+    /// owned instance of that type in memory. The caller must then `forget` the original instance
+    /// if this returns `Some`, as ownership has been transferred to the newly constructed enum.
+    unsafe fn try_from_raw(id: core::any::TypeId, ptr: *mut ()) -> Option<Self::Enum>;
+
+    /// Try to cast this enum into another Enum type. If successful, returns the new enum.
+    /// If unsuccessful (the variant type is not in `O`), returns `Err(self)`.
+    fn try_cast<O: EnumRuntime>(e: Self::Enum) -> Result<O::Enum, Self::Enum>;
+
+    /// Reads the held value safely if its type matches `T`.
+    /// Returns the unwrapped value on success, or the original enum if the type differs.
+    fn narrow_type<T: 'static>(e: Self::Enum) -> Result<T, Self::Enum>;
 }
 
 impl TypeSet for () {
@@ -137,16 +180,24 @@ impl TypeSet for () {
 }
 
 impl EnumRuntime for () {
-    fn enum_into_any(e: Self::Enum) -> Box<dyn Any> {
-        match e {}
-    }
-
-    fn enum_ref_as_any(e: &Self::Enum) -> &dyn Any {
+    #[inline]
+    fn type_id(e: &Self::Enum) -> core::any::TypeId {
         match *e {}
     }
 
-    fn enum_from_any(_: Box<dyn Any>) -> Self::Enum {
-        unreachable!("cannot build E0 from Box<dyn Any>");
+    #[inline]
+    unsafe fn try_from_raw(_: core::any::TypeId, _: *mut ()) -> Option<Self::Enum> {
+        None
+    }
+
+    #[inline]
+    fn try_cast<O: EnumRuntime>(e: Self::Enum) -> Result<O::Enum, Self::Enum> {
+        match e {}
+    }
+
+    #[inline]
+    fn narrow_type<T: 'static>(e: Self::Enum) -> Result<T, Self::Enum> {
+        match e {}
     }
 }
 
@@ -221,7 +272,7 @@ pub trait Narrow<Target, Index>: TupleForm {
 impl<Target, Tail> Narrow<Target, End> for Cons<Target, Tail>
 where
     Tail: TupleForm,
-    Cons<Target, Tail>: TupleForm,
+    Self: TupleForm,
 {
     type Remainder = Tail;
 }
@@ -229,26 +280,25 @@ where
 /// Recursive case where the search Target is in the Tail of the Variants.
 impl<Head, Tail, Target, Index> Narrow<Target, Recurse<Index>> for Cons<Head, Tail>
 where
-    Tail: Narrow<Target, Index>,
-    Tail: TupleForm,
-    Cons<Head, Tail>: TupleForm,
+    Tail: TupleForm + Narrow<Target, Index>,
+    Self: TupleForm,
     Cons<Head, <Tail as Narrow<Target, Index>>::Remainder>: TupleForm,
 {
     type Remainder = Cons<Head, <Tail as Narrow<Target, Index>>::Remainder>;
 }
 
-fn _narrow_test() {
-    fn can_narrow<Types, Target, Remainder, Index>()
+const _: () = {
+    const fn can_narrow<Types, Target, Remainder, Index>()
     where
         Types: Narrow<Target, Index, Remainder = Remainder>,
     {
     }
 
-    type T0 = <(u32, String) as TypeSet>::Variants;
+    type T0 = <(u32, &'static str) as TypeSet>::Variants;
 
     can_narrow::<T0, u32, _, _>();
-    can_narrow::<T0, String, Cons<u32, End>, _>();
-}
+    can_narrow::<T0, &'static str, Cons<u32, End>, _>();
+};
 
 /* ------------------------- DrainInto ----------------------- */
 
@@ -262,9 +312,10 @@ fn _narrow_test() {
 /// ```rust
 /// use terrors::OneOf;
 ///
-/// let e: OneOf<(String, &str)> = OneOf::new("hello");
-/// let s: String = e.into();
-/// assert_eq!(s, "hello");
+/// let e: OneOf<(u32, u8)> = OneOf::new(5_u8);
+///
+/// let s: u64 = e.into();
+/// assert_eq!(s, 5);
 /// ```
 pub trait DrainInto<O>: TypeSet + Sized {
     /// Consumes `e` and converts whichever variant it holds into `O`.
@@ -277,6 +328,7 @@ macro_rules! impl_drain_into {
         where
             $head: Into<O> + 'static,
         {
+            #[inline]
             fn drain(e: OneOf<($head,)>) -> O {
                 e.take().into()
             }
@@ -290,6 +342,7 @@ macro_rules! impl_drain_into {
             $($tail: 'static,)+
             ($($tail,)+): DrainInto<O>,
         {
+            #[inline]
             fn drain(e: OneOf<($head, $($tail),+)>) -> O {
                 match e.narrow::<$head, _>() {
                     Ok(h) => h.into(),
@@ -328,7 +381,7 @@ pub trait SupersetOf<Other, Index> {
     type Remainder: TupleForm;
 }
 
-/// Base case
+/// Base case.
 impl<T: TupleForm> SupersetOf<End, End> for T {
     type Remainder = T;
 }
@@ -338,29 +391,27 @@ impl<T: TupleForm> SupersetOf<End, End> for T {
 impl<SubHead, SubTail, SuperHead, SuperTail, HeadIndex, TailIndex>
     SupersetOf<Cons<SubHead, SubTail>, Cons<HeadIndex, TailIndex>> for Cons<SuperHead, SuperTail>
 where
-    Cons<SuperHead, SuperTail>: Narrow<SubHead, HeadIndex>,
-    <Cons<SuperHead, SuperTail> as Narrow<SubHead, HeadIndex>>::Remainder:
-        SupersetOf<SubTail, TailIndex>,
+    Self: Narrow<SubHead, HeadIndex>,
+    <Self as Narrow<SubHead, HeadIndex>>::Remainder: SupersetOf<SubTail, TailIndex>,
 {
-    type Remainder =
-        <<Cons<SuperHead, SuperTail> as Narrow<SubHead, HeadIndex>>::Remainder as SupersetOf<
-            SubTail,
-            TailIndex,
-        >>::Remainder;
+    type Remainder = <<Self as Narrow<SubHead, HeadIndex>>::Remainder as SupersetOf<
+        SubTail,
+        TailIndex,
+    >>::Remainder;
 }
 
-fn _superset_test() {
-    fn is_superset<S1, S2, Remainder, Index>()
+const _: () = {
+    const fn is_superset<S1, S2, Remainder, Index>()
     where
         S1: SupersetOf<S2, Index, Remainder = Remainder>,
     {
     }
 
     type T0 = <(u32,) as TypeSet>::Variants;
-    type T1A = <(u32, String) as TypeSet>::Variants;
-    type T1B = <(String, u32) as TypeSet>::Variants;
-    type T2 = <(String, i32, u32) as TypeSet>::Variants;
-    type T3 = <(Vec<u8>, Vec<i8>, u32, f32, String, f64, i32) as TypeSet>::Variants;
+    type T1A = <(u32, &'static str) as TypeSet>::Variants;
+    type T1B = <(&'static str, u32) as TypeSet>::Variants;
+    type T2 = <(&'static str, i32, u32) as TypeSet>::Variants;
+    type T3 = <((), (), u32, f32, &'static str, f64, i32) as TypeSet>::Variants;
 
     is_superset::<T0, T0, _, _>();
     is_superset::<T1A, T1A, _, _>();
@@ -369,10 +420,10 @@ fn _superset_test() {
     is_superset::<T2, T2, _, _>();
     is_superset::<T1A, T0, _, _>();
     is_superset::<T1B, T0, _, _>();
-    is_superset::<T2, T0, <(String, i32) as TypeSet>::Variants, _>();
+    is_superset::<T2, T0, <(&'static str, i32) as TypeSet>::Variants, _>();
     is_superset::<T2, T1A, <(i32,) as TypeSet>::Variants, _>();
     is_superset::<T2, T1B, <(i32,) as TypeSet>::Variants, _>();
-    is_superset::<T3, T1A, <(Vec<u8>, Vec<i8>, f32, f64, i32) as TypeSet>::Variants, _>();
+    is_superset::<T3, T1A, <((), (), f32, f64, i32) as TypeSet>::Variants, _>();
     is_superset::<T3, T1B, _, _>();
     is_superset::<T3, T0, _, _>();
     is_superset::<T3, T2, _, _>();
@@ -382,4 +433,4 @@ fn _superset_test() {
     type T5rem = <(u16, u32, u64) as TypeSet>::Variants;
 
     is_superset::<T5sup, T5sub, T5rem, _>();
-}
+};

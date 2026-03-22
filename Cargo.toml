@@ -1,7 +1,7 @@
 [package]
 name = "terrors"
 version = "0.5.0"
-edition = "2021"
+edition = "2024"
 authors = ["Tyler Neely <tylerneely@gmail.com>, CleverWild"]
 documentation = "https://docs.rs/terrors/"
 description = "ergonomic and precise error handling built atop type-level set arithmetic"
@@ -18,5 +18,39 @@ error_provide = ["nightly"]
 
 # ---------------- lints ----------------
 [lints.rust]
+missing_docs = "warn"
+missing-docs = "allow"
 
 [lints.clippy]
+allow-attributes-without-reason = "allow"
+blanket_clippy_restriction_lints = "allow"
+items_after_statements = "allow"
+missing_errors_doc = "allow"
+type_complexity = "allow"
+uninhabited_references = "allow"
+wildcard_imports = "allow"
+allow_attributes_without_reason = "allow"
+single_char_lifetime_names = "allow"
+field_scoped_visibility_modifiers = "allow"
+pub_use = "allow"
+missing_docs_in_private_items = "allow"
+implicit_return = "allow"
+unreachable = "allow"
+arbitrary_source_item_ordering = "allow"
+exhaustive_enums = "allow"
+absolute_paths = "allow"
+missing_inline_in_public_items = "allow"
+missing_trait_methods = "allow"
+pattern_type_mismatch = "allow"
+min_ident_chars = "allow"
+single_call_fn = "allow"
+default_numeric_fallback = "allow"
+shadow_same = "allow"
+question_mark_used = "allow"
+shadow_reuse = "allow"
+shadow_unrelated = "allow"
+separated_literal_suffix = "allow"
+
+restriction = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }

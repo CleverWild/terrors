@@ -1,10 +1,19 @@
 # terrors - the Rust error **handling** library
 
 Handling errors means taking a set of possible error
-types, removing the ones that are locally addressible,
+types, removing the ones that are locally addressable,
 and then if the set of errors is not within those local
 concerns, propagating the remainder to a caller. The
 caller should not receive the local errors of the callee.
+
+## Current guarantees
+
+- `#![no_std]` by default.
+  - The crate is designed to work in `core`-only environments.
+  - You can still use it in `std` projects normally.
+- No `dyn Any` in the runtime representation.
+- No heap allocation required by `OneOf` operations (`new`, `narrow`, `broaden`, conversions).
+- Compile-time checked type-set arithmetic for narrowing and broadening.
 
 ## Principles
 
@@ -24,9 +33,9 @@ caller should not receive the local errors of the callee.
 ```rust
 use terrors::{Broaden, OneOf};
 
-let one_of_3: OneOf<(String, u32, Vec<u8>)> = OneOf::new(5);
+let one_of_3: OneOf<(&'static str, u32, ())> = OneOf::new(5);
 
-let narrowed_res: Result<u32, OneOf<(String, Vec<u8>)>> =
+let narrowed_res: Result<u32, OneOf<(&'static str, ())>> =
     one_of_3.narrow();
 
 assert_eq!(5, narrowed_res.unwrap());
@@ -81,7 +90,7 @@ use std::error::Error;
 use std::io;
 use terrors::OneOf;
 
-let o_1: OneOf<(u32, String)> = OneOf::new(5_u32);
+let o_1: OneOf<(u32, &'static str)> = OneOf::new(5_u32);
 
 // Debug is implemented if all types in the type set implement Debug
 dbg!(&o_1);
@@ -105,14 +114,14 @@ OneOf can also be turned into an owned or referenced enum form:
 ```rust
 use terrors::{OneOf, E2};
 
-let o_1: OneOf<(u32, String)> = OneOf::new(5_u32);
+let o_1: OneOf<(u32, &'static str)> = OneOf::new(5_u32);
 
 match o_1.as_enum() {
     E2::T1(u) => {
         println!("handling reference {u}: u32")
     }
     E2::T2(s) => {
-        println!("handling reference {s}: String")
+        println!("handling reference {s}: &'static str")
     }
 }
 
@@ -121,7 +130,7 @@ match o_1.to_enum() {
         println!("handling owned {u}: u32")
     }
     E2::T2(s) => {
-        println!("handling owned {s}: String")
+        println!("handling owned {s}: &'static str")
     }
 }
 ```

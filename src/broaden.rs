@@ -21,22 +21,25 @@ pub trait Broaden<E: TypeSet> {
 impl<E: TypeSet> Broaden<E> for OneOf<E> {
     type Output<O: TypeSet> = OneOf<O>;
 
+    #[inline]
     fn broaden<Other, Index>(self) -> Self::Output<Other>
     where
         E: EnumRuntime,
         Other: TypeSet + EnumRuntime,
         Other::Variants: SupersetOf<E::Variants, Index>,
     {
-        let boxed = E::enum_into_any(self.value);
-        OneOf {
-            value: Other::enum_from_any(boxed),
-        }
+        let Ok(value) = E::try_cast::<Other>(self.value) else {
+            unreachable!("Cast to broadened superset should never fail")
+        };
+
+        OneOf { value }
     }
 }
 
 impl<E: TypeSet> Broaden<E> for Option<OneOf<E>> {
     type Output<O: TypeSet> = Option<OneOf<O>>;
 
+    #[inline]
     fn broaden<Other, Index>(self) -> Self::Output<Other>
     where
         E: EnumRuntime,
@@ -50,6 +53,7 @@ impl<E: TypeSet> Broaden<E> for Option<OneOf<E>> {
 impl<T, E: TypeSet> Broaden<E> for Result<T, OneOf<E>> {
     type Output<O: TypeSet> = Result<T, OneOf<O>>;
 
+    #[inline]
     fn broaden<Other, Index>(self) -> Self::Output<Other>
     where
         E: EnumRuntime,

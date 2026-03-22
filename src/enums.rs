@@ -27,6 +27,45 @@ macro_rules! define_lifted_enum {
                 $ty($ty),
             )+
         }
+
+        impl<$($ty: core::fmt::Debug),+> core::fmt::Debug for $enum<$($ty),+> {
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                match self {
+                    $($enum::$ty(v) => core::fmt::Debug::fmt(v, f),)+
+                }
+            }
+        }
+
+        impl<$($ty: core::fmt::Display),+> core::fmt::Display for $enum<$($ty),+> {
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                match self {
+                    $($enum::$ty(v) => core::fmt::Display::fmt(v, f),)+
+                }
+            }
+        }
+
+        impl<$($ty: core::clone::Clone),+> core::clone::Clone for $enum<$($ty),+> {
+            fn clone(&self) -> Self {
+                match self {
+                    $($enum::$ty(v) => $enum::$ty(core::clone::Clone::clone(v)),)+
+                }
+            }
+        }
+
+        impl<$($ty: core::error::Error + 'static),+> core::error::Error for $enum<$($ty),+> {
+            fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+                match self {
+                    $($enum::$ty(v) => v.source(),)+
+                }
+            }
+
+            #[cfg(feature = "error_provide")]
+            fn provide<'a>(&'a self, request: &mut core::error::Request<'a>) {
+                match self {
+                    $($enum::$ty(v) => core::error::Error::provide(v, request),)+
+                }
+            }
+        }
     };
 }
 
@@ -35,6 +74,30 @@ macro_rules! define_lifted_enum {
 /// `E0` has no variants and can never be constructed. It is the `TypeSet::Enum` for the
 /// empty type set `()`, meaning a `OneOf<()>` can also never be constructed.
 pub enum E0 {}
+
+impl core::fmt::Debug for E0 {
+    fn fmt(&self, _: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        unreachable!()
+    }
+}
+
+impl core::fmt::Display for E0 {
+    fn fmt(&self, _: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        unreachable!()
+    }
+}
+
+impl core::clone::Clone for E0 {
+    fn clone(&self) -> Self {
+        unreachable!()
+    }
+}
+
+impl core::error::Error for E0 {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        unreachable!()
+    }
+}
 
 macro_rules! define_supported_lifted_enums {
     (each: $($enum:ident => $($ty:ident),+;)+) => {
@@ -47,8 +110,9 @@ macro_rules! define_supported_lifted_enums {
 crate::with_supported_type_sets!(define_supported_lifted_enums);
 
 impl<T1> From<T1> for E1<T1> {
-    fn from(t1: T1) -> E1<T1> {
-        E1::T1(t1)
+    #[inline]
+    fn from(t1: T1) -> Self {
+        Self::T1(t1)
     }
 }
 
@@ -58,6 +122,7 @@ macro_rules! impl_one_of_to_enum {
     ($enum:ident; $($ty:ident),+ $(,)?) => {
         impl<$($ty),+> From<$crate::OneOf<($($ty,)+)>> for $enum<$($ty),+>
         {
+            #[inline]
             fn from(one_of: $crate::OneOf<($($ty,)+)>) -> Self {
                 one_of.value
             }
@@ -65,6 +130,7 @@ macro_rules! impl_one_of_to_enum {
 
         impl<'a, $($ty),+> From<&'a $crate::OneOf<($($ty,)+)>> for $enum<$(&'a $ty),+>
         {
+            #[inline]
             fn from(one_of: &'a $crate::OneOf<($($ty,)+)>) -> Self {
                 match &one_of.value {
                     $(

@@ -1,9 +1,6 @@
-// Enable unstable features only when both conditions are met:
-// 1. User explicitly opts-in via feature = "nightly"
-// 2. Compiler is actually nightly (detected via build.rs + rustversion)
 #![cfg_attr(feature = "nightly", feature(error_generic_member_access))]
-#![doc = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/README.md"))]
-#![warn(missing_docs)]
+#![no_std]
+#![cfg_attr(doc, doc = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/README.md")))]
 #![allow(clippy::type_complexity)]
 
 #[doc = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/README.md"))]
@@ -15,7 +12,7 @@ mod utils;
 
 mod broaden;
 mod enums;
-mod fold;
+
 mod one_of;
 mod subset;
 mod type_set;
