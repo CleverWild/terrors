@@ -1,4 +1,8 @@
-#![cfg_attr(feature = "nightly", feature(error_generic_member_access))]
+#![cfg_attr(
+    feature = "nightly",
+    feature(error_generic_member_access, specialization),
+    allow(incomplete_features)
+)]
 #![no_std]
 #![cfg_attr(doc, doc = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/README.md")))]
 #![allow(clippy::type_complexity)]

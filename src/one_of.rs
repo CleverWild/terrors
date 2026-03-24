@@ -2,6 +2,8 @@
 
 use core::{error::Error, fmt, ops::Deref};
 
+#[cfg(feature = "nightly")]
+use crate::type_set::TryCastNestedInto;
 use crate::{
     Cons, End,
     type_set::{Contains, DrainInto, EnumRuntime, Narrow, TupleForm, TypeSet},
@@ -117,11 +119,17 @@ where
         E: EnumRuntime,
         E::Variants: Contains<T, Index>,
     {
-        let Ok(value) = E::from_owned(t) else {
-            unreachable!("`Contains<T, _>` guarantees T is part of E and construction cannot fail")
-        };
-
-        Self { value }
+        let result = E::from_owned(t);
+        #[cfg(feature = "nightly")]
+        let result = result.map_err(<T as TryCastNestedInto<E>>::try_cast_nested_into);
+        result.map_or_else(
+            |_| {
+                unreachable!(
+                    "`Contains<T, _>` guarantees T is part of E and construction cannot fail"
+                )
+            },
+            |value| Self { value },
+        )
     }
 
     /// Attempt to downcast the `OneOf` into a specific type, and
@@ -140,23 +148,19 @@ where
         E::Variants: Narrow<Target, Index>,
         <<E::Variants as Narrow<Target, Index>>::Remainder as TupleForm>::Tuple: EnumRuntime,
     {
-        match E::narrow_type::<Target>(self.value) {
-            Ok(target) => Ok(target),
-            Err(e) => {
-                type RemainderTuple<E, Target, Index> =
-                    <<E as TypeSet>::Variants as Narrow<Target, Index>>::Remainder;
+        E::narrow_type::<Target>(self.value).map_err(|e| {
+            let Ok(remainder_value) =
+                E::try_cast::<<<<E as TypeSet>::Variants as Narrow<Target, Index>>::Remainder as TupleForm>::Tuple>(e)
+            else {
+                unreachable!(
+                    "Cast to narrowed remainder type should never fail since `Target` is not the variant type"
+                );
+            };
 
-                let remainder_value = E::try_cast::<
-                    <RemainderTuple<E, Target, Index> as TupleForm>::Tuple,
-                >(e).unwrap_or_else(|_| unreachable!(
-                        "Cast to narrowed remainder type should never fail since `Target` is not the variant type"
-                    ));
-
-                Err(OneOf {
-                    value: remainder_value,
-                })
+            OneOf {
+                value: remainder_value,
             }
-        }
+        })
     }
 
     /// For a `OneOf` with a single variant, return the contained value.

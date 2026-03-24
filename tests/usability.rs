@@ -419,6 +419,22 @@ fn complex_subset() {
 
 #[cfg(feature = "nightly")]
 #[test]
-fn unique_types() {
-    // let _x: OneOf<(u8, u16, u8)> = OneOf::new(5_u8);
+fn nightly_new_keeps_nested_layout_compatible() {
+    let inner: OneOf<(u8, u16)> = OneOf::new(5_u8);
+    let nested: OneOf<((), OneOf<(u8, u16)>)> = OneOf::new(inner);
+    let flat: OneOf<((), u8, u16)> = nested.broaden();
+
+    let extracted: u8 = flat.narrow().unwrap();
+    assert_eq!(extracted, 5);
+}
+
+#[cfg(feature = "nightly")]
+#[test]
+fn nightly_broaden_flattens_nested_layout() {
+    let inner: OneOf<(u8, u16)> = OneOf::new(9_u8);
+    let nested: OneOf<((), OneOf<(u8, u16)>)> = OneOf::new(inner);
+    let flat: OneOf<((), u8, u16)> = nested.broaden();
+
+    let extracted: u8 = flat.narrow().unwrap();
+    assert_eq!(extracted, 9);
 }

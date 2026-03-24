@@ -37,7 +37,7 @@ macro_rules! impl_tuple_type_set {
                     )+
                 }
             }
-            
+
             #[inline]
             unsafe fn try_from_raw(id: core::any::TypeId, ptr: *mut ()) -> Option<Self::Enum> {
                 $(
@@ -56,7 +56,19 @@ macro_rules! impl_tuple_type_set {
                     $(
                         $enum::$ty(v) => match O::from_owned(v) {
                             Ok(o) => Ok(o),
-                            Err(v) => Err($enum::$ty(v)),
+                            Err(v) => {
+                                #[cfg(feature = "nightly")]
+                                {
+                                    match <_ as TryCastNestedInto<O>>::try_cast_nested_into(v) {
+                                        Ok(o) => Ok(o),
+                                        Err(v) => Err($enum::$ty(v)),
+                                    }
+                                }
+                                #[cfg(not(feature = "nightly"))]
+                                {
+                                    Err($enum::$ty(v))
+                                }
+                            }
                         }
                     )+
                 }
@@ -147,10 +159,7 @@ pub trait EnumRuntime: TypeSet + Sized {
         // If `try_from_raw` succeeds, ownership moves into the returned enum.
         // If it fails, we reconstruct and return the original value.
         let maybe = unsafe { Self::try_from_raw(id, ptr) };
-        let Some(e) = maybe else {
-            return Err(core::mem::ManuallyDrop::into_inner(value));
-        };
-        Ok(e)
+        maybe.ok_or_else(|| core::mem::ManuallyDrop::into_inner(value))
     }
 
     /// Attempts to construct `Self::Enum` by reading from `ptr` if `type_id` matches one of the variants.
@@ -168,6 +177,38 @@ pub trait EnumRuntime: TypeSet + Sized {
     /// Reads the held value safely if its type matches `T`.
     /// Returns the unwrapped value on success, or the original enum if the type differs.
     fn narrow_type<T: 'static>(e: Self::Enum) -> Result<T, Self::Enum>;
+}
+
+#[cfg(feature = "nightly")]
+pub trait TryCastNestedInto<O>: Sized
+where
+    O: TypeSet + EnumRuntime,
+{
+    fn try_cast_nested_into(self) -> Result<O::Enum, Self>;
+}
+
+#[cfg(feature = "nightly")]
+impl<T, O> TryCastNestedInto<O> for T
+where
+    O: TypeSet + EnumRuntime,
+{
+    default fn try_cast_nested_into(self) -> Result<O::Enum, Self> {
+        Err(self)
+    }
+}
+
+#[cfg(feature = "nightly")]
+impl<Inner, O> TryCastNestedInto<O> for OneOf<Inner>
+where
+    Inner: TypeSet + EnumRuntime,
+    O: TypeSet + EnumRuntime,
+{
+    fn try_cast_nested_into(self) -> Result<O::Enum, Self> {
+        match Inner::try_cast::<O>(self.value) {
+            Ok(value) => Ok(value),
+            Err(value) => Err(Self { value }),
+        }
+    }
 }
 
 impl TypeSet for () {
